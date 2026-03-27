@@ -1399,6 +1399,8 @@
 
       // Hit-test uses the same scale as draw so tap targets match visuals
       function _hitBtn(tx, ty, btn) { return Math.hypot(tx - btn.cx, ty - btn.cy) <= btn.r * mobBtnScale; }
+      // Rect hit-test (no scaling needed — these are fixed overlay elements)
+      function _hitRect(tx, ty, r) { return tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h; }
 
       // Dispatch a real keydown+keyup so all existing keyboard logic runs unchanged
       function _fireKey(key) {
@@ -1408,6 +1410,30 @@
 
       // Pixels a look-drag must move before we start rotating (prevents touchdown jitter)
       const LOOK_THRESHOLD = 6;
+
+      // ── CCTV button rects (screen-fixed, drawn + hit-tested during cameraViewMode) ──
+      const MOB_CCTV = {
+        exit:    { x: 748, y:   8, w: 44, h: 26 },
+        prevCam: { x:   8, y: 558, w: 88, h: 30 },
+        nextCam: { x: 104, y: 558, w: 88, h: 30 },
+        nv:      { x: 632, y: 558, w: 120, h: 30 },
+      };
+
+      // ── Pegboard swipe state (tracks horizontal drag inside the pegboard panel) ──
+      const mobPegSwipe = { active: false, id: null, startX: 0, startScrollX: 0, moved: false };
+      function _resetPegSwipe() { mobPegSwipe.active = false; mobPegSwipe.id = null; mobPegSwipe.moved = false; }
+
+      // ── Overlay panel bounds used for tap-outside-to-close ──
+      // These match the constants in each drawX() function exactly.
+      const MOB_PANELS = {
+        equipment:   { x:  60, y:  35, w: 680, h: 530 },
+        keypad:      { x: 270, y: 250, w: 260, h: 140 },
+        dangerTimer: { x: 270, y: 220, w: 260, h: 170 },
+        fourPanel:   { x:  50, y:  30, w: 700, h: 540 },
+        corkBoard:   { x: 120, y:  80, w: 560, h: 440 },
+        // Journal spans x:20–756, y:28–548 (includes tab strip above pages)
+        journal:     { x:  20, y:  28, w: 736, h: 520 },
+      };
 
       function _resetLook() {
         mobileLook.active  = false; mobileLook.id = null;
@@ -1440,25 +1466,70 @@
         for (const t of e.changedTouches) {
           const { x, y } = _tc(t);
 
-          // ── Popup open: route as synthetic click ──
+          // ── CCTV view mode — button-driven controls ──
+          if (cameraViewMode) {
+            if (_hitRect(x, y, MOB_CCTV.exit))    { cameraViewMode = false; continue; }
+            if (_hitRect(x, y, MOB_CCTV.nv))      { cameraNightVision = !cameraNightVision; continue; }
+            const _cams = getPlacedCameras();
+            if (_hitRect(x, y, MOB_CCTV.prevCam) && _cams.length > 1) {
+              cameraViewIndex = (cameraViewIndex - 1 + _cams.length) % _cams.length; continue;
+            }
+            if (_hitRect(x, y, MOB_CCTV.nextCam) && _cams.length > 1) {
+              cameraViewIndex = (cameraViewIndex + 1) % _cams.length; continue;
+            }
+            // Tap anywhere else in CCTV view → no action (avoids accidental exits)
+            continue;
+          }
+
+          // ── Popup open ──
           if (journalOpen || equipmentOpen || keypadOpen || dangerTimerOpen || fourPanelOpen || corkBoardOpen) {
+            // Determine which panel is active and get its bounds
+            const panel = journalOpen     ? MOB_PANELS.journal
+                        : equipmentOpen   ? MOB_PANELS.equipment
+                        : keypadOpen      ? MOB_PANELS.keypad
+                        : dangerTimerOpen ? MOB_PANELS.dangerTimer
+                        : fourPanelOpen   ? MOB_PANELS.fourPanel
+                        :                   MOB_PANELS.corkBoard;
+
+            // Tap OUTSIDE panel → close it immediately
+            if (!_hitRect(x, y, panel)) {
+              journalOpen     = journalOpen     && false; // only the active one closes
+              equipmentOpen   = equipmentOpen   && !equipmentOpen;
+              keypadOpen      = keypadOpen      && !keypadOpen;
+              dangerTimerOpen = dangerTimerOpen && !dangerTimerOpen;
+              fourPanelOpen   = fourPanelOpen   && !fourPanelOpen;
+              corkBoardOpen   = corkBoardOpen   && !corkBoardOpen;
+              if (journalOpen     && panel === MOB_PANELS.journal)     journalOpen     = false;
+              if (equipmentOpen   && panel === MOB_PANELS.equipment)   equipmentOpen   = false;
+              if (keypadOpen      && panel === MOB_PANELS.keypad)      keypadOpen      = false;
+              if (dangerTimerOpen && panel === MOB_PANELS.dangerTimer) dangerTimerOpen = false;
+              if (fourPanelOpen   && panel === MOB_PANELS.fourPanel)   fourPanelOpen   = false;
+              if (corkBoardOpen   && panel === MOB_PANELS.corkBoard)   corkBoardOpen   = false;
+              // Simpler: just close whatever is open
+              journalOpen = false; equipmentOpen = false; keypadOpen = false;
+              dangerTimerOpen = false; fourPanelOpen = false; corkBoardOpen = false;
+              continue;
+            }
+
+            // Tap INSIDE pegboard panel — distinguish swipe from tap
+            if (equipmentOpen) {
+              const bx = 68, by = 88, bw = 664, bh = 440;
+              if (x >= bx && x <= bx + bw && y >= by && y <= by + bh && !mobPegSwipe.active) {
+                // Start tracking a potential swipe over the board area
+                mobPegSwipe.active      = true;
+                mobPegSwipe.id          = t.identifier;
+                mobPegSwipe.startX      = x;
+                mobPegSwipe.startScrollX = pegScrollX;
+                mobPegSwipe.moved       = false;
+                continue; // don't fire click yet — wait for touchend to decide tap vs swipe
+              }
+            }
+
+            // Tap inside any other panel → route as synthetic click for existing handlers
             canvas.dispatchEvent(new MouseEvent('click', {
               bubbles: true, cancelable: true,
               clientX: t.clientX, clientY: t.clientY,
             }));
-            continue;
-          }
-
-          // ── Camera view mode ──
-          if (cameraViewMode) {
-            const _cams = getPlacedCameras();
-            if (x < canvas.width / 2 && _cams.length > 1) {
-              cameraViewIndex = (cameraViewIndex - 1 + _cams.length) % _cams.length;
-            } else if (x < canvas.width * 0.75 && _cams.length > 1) {
-              cameraViewIndex = (cameraViewIndex + 1) % _cams.length;
-            } else {
-              cameraViewMode = false;
-            }
             continue;
           }
 
@@ -1519,6 +1590,15 @@
         for (const t of e.changedTouches) {
           const { x, y } = _tc(t);
 
+          // ── Pegboard swipe (only active when equipmentOpen) ──
+          if (t.identifier === mobPegSwipe.id && mobPegSwipe.active) {
+            const dx = mobPegSwipe.startX - x; // drag left = scroll right (positive pegScrollX)
+            if (Math.abs(dx) > 8) mobPegSwipe.moved = true;
+            const virtualW = Math.ceil(equipmentList.length / 3) * 200 + 60;
+            const maxScroll = Math.max(0, virtualW - 664); // bw=664
+            pegScrollX = Math.max(0, Math.min(maxScroll, mobPegSwipe.startScrollX + dx));
+          }
+
           // Update joystick knob position
           if (t.identifier === mobileJoy.id) {
             mobileJoy.curX = x; mobileJoy.curY = y;
@@ -1530,7 +1610,6 @@
               const totalDrag = Math.hypot(x - mobileLook.startX, y - mobileLook.startY);
               if (totalDrag >= LOOK_THRESHOLD) {
                 mobileLook.started = true;
-                // Anchor lastX here so the first processed delta isn't a jump
                 mobileLook.lastX = x; mobileLook.lastY = y;
               }
             } else {
