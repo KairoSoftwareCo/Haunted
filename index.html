@@ -1542,11 +1542,61 @@
         }
       }, { passive: false });
 
+      // ── Tap-to-interact helpers ──────────────────────────────────────────────
+      // World-space radius (px) around an interactable that counts as "tapped on it".
+      // At default zoom 1.8, TAP_R=60 world px ≈ 108 screen px — generous but not accidental.
+      const TAP_R = 60;
+
+      // Returns true when the tapped world point (wx,wy) is near any interactable
+      // that the player is currently close enough to use.
+      // All nearX() calls are the same proximity gates the keyboard E handler uses —
+      // so the same distance restrictions apply. No fake logic, just a world-space tap check.
+      function _tapNearInteractable(wx, wy) {
+        // Doors
+        const nd = nearDoor();
+        if (nd && Math.hypot(wx - (nd.x + nd.w / 2), wy - (nd.y + nd.h / 2)) < TAP_R) return true;
+        // World items on the floor (pick-up / toggle placed tool)
+        const pcx = player.x + 8, pcy = player.y + 8;
+        const nearWI = worldItems.find(it => Math.hypot((it.x + 6) - pcx, (it.y + 6) - pcy) < 30);
+        if (nearWI && Math.hypot(wx - (nearWI.x + 6), wy - (nearWI.y + 6)) < TAP_R) return true;
+        // Van rear door
+        if (nearVanDoor()     && Math.hypot(wx - 360, wy - 926) < TAP_R) return true;
+        // Van devices (world centres match nearX() target coordinates)
+        if (nearKeypad()      && Math.hypot(wx - 347, wy - 900) < TAP_R) return true;
+        if (nearPegboard()    && Math.hypot(wx - 270, wy - 950) < TAP_R) return true;
+        if (nearCCTV()        && Math.hypot(wx - 196, wy - 926) < TAP_R) return true;
+        if (nearDangerTimer() && Math.hypot(wx - 210, wy - 900) < TAP_R) return true;
+        if (nearFourPanel()   && Math.hypot(wx - 306, wy - 900) < TAP_R) return true;
+        if (nearCorkBoard()   && Math.hypot(wx - 255, wy - 898) < TAP_R) return true;
+        // Light switches
+        const swIdx = nearSwitch();
+        if (swIdx >= 0) {
+          const sw = roomLights[swIdx];
+          if (Math.hypot(wx - sw.x, wy - sw.y) < TAP_R) return true;
+        }
+        return false;
+      }
+
       function _touchEnd(e) {
         e.preventDefault();
         for (const t of e.changedTouches) {
-          if (t.identifier === mobileJoy.id)      _resetJoy();
-          if (t.identifier === mobileLook.id)     _resetLook();
+          if (t.identifier === mobileJoy.id) _resetJoy();
+
+          if (t.identifier === mobileLook.id) {
+            // Tap-to-interact: look touch ended before the rotation threshold was crossed
+            // = the finger barely moved = intentional tap in the game world.
+            if (!mobileLook.started &&
+                gameRunning && !journalOpen && !equipmentOpen && !keypadOpen &&
+                !dangerTimerOpen && !fourPanelOpen && !corkBoardOpen && !cameraViewMode) {
+              // Convert screen tap → world coords (inverse of the draw() camera transform)
+              const camX = player.x + 8, camY = player.y + 8;
+              const wx = (mobileLook.startX - canvas.width  / 2) / gameZoom + camX;
+              const wy = (mobileLook.startY - canvas.height / 2) / gameZoom + camY;
+              if (_tapNearInteractable(wx, wy)) _fireKey(keybinds.interact);
+            }
+            _resetLook();
+          }
+
           if (t.identifier === mobileSprintId)  { mobileSprinting = false; mobileSprintId = null; }
           if (t.identifier === mobilePinch.id0 ||
               t.identifier === mobilePinch.id1)   _resetPinch();
