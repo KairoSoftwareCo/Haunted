@@ -97,12 +97,25 @@
 
     // ── Mobile input state ───────────────────────────────────────────────────
     // Virtual joystick (left thumb zone)
-    const mobileJoy = { active: false, id: null, baseX: 130, baseY: 490, curX: 130, curY: 490 };
-    // Camera look / rotate (right thumb zone — drag to rotate playerAngle)
-    const mobileLook = { active: false, id: null, lastX: 0, lastY: 0 };
-    let mobileAngleOverride = false; // true while a look-drag is active; suppresses mouse lerp
-    let mobileSprinting = false;     // true while sprint button is held on mobile
-    let mobileSprintId  = null;      // touch identifier for the held sprint button
+    // angle/magnitude are computed each frame in update() from curX/curY vs baseX/baseY
+    const mobileJoy = {
+      active: false, id: null,
+      baseX: 130, baseY: 490, curX: 130, curY: 490,
+      angle: 0,      // current joystick direction in radians (updated in update())
+      magnitude: 0,  // 0–1 push strength (updated in update())
+    };
+    // Camera look / rotate (right thumb zone — horizontal drag rotates playerAngle)
+    // "started" gates rotation behind a 6px threshold to prevent jitter-spin on touchdown
+    const mobileLook = {
+      active: false, id: null,
+      startX: 0, startY: 0,  // exact touchdown coordinates
+      lastX:  0, lastY:  0,  // last processed position (set after threshold crossed)
+      started: false,        // true once the drag has crossed the movement threshold
+    };
+    // Pinch-to-zoom (two-finger gesture)
+    const mobilePinch = { active: false, lastDist: 0, id0: null, id1: null };
+    let mobileSprinting = false;  // true while sprint button is held on mobile
+    let mobileSprintId  = null;   // touch identifier for the held sprint button
 
     // Mobile button layout in 800×600 logical screen space.
     // All positions are screen-fixed (drawn after ctx.restore()).
@@ -1344,7 +1357,7 @@
     // These map touch gestures onto the same game actions as keyboard/mouse.
     // Desktop keyboard/mouse paths are NOT modified — both run side-by-side.
     if (isMobile) {
-      // Convert a Touch object to logical 800×600 canvas coordinates
+      // Convert a Touch to logical 800×600 canvas coordinates
       function _tc(touch) {
         const rect = canvas.getBoundingClientRect();
         return {
@@ -1353,25 +1366,49 @@
         };
       }
 
-      // Circle hit-test for mobile buttons
-      function _hitBtn(tx, ty, btn) {
-        return Math.hypot(tx - btn.cx, ty - btn.cy) <= btn.r;
-      }
+      function _hitBtn(tx, ty, btn) { return Math.hypot(tx - btn.cx, ty - btn.cy) <= btn.r; }
 
-      // Fire a synthetic keydown+keyup pair so all existing keyboard logic fires unchanged
+      // Dispatch a real keydown+keyup so all existing keyboard logic runs unchanged
       function _fireKey(key) {
         document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
         setTimeout(() => document.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true })), 60);
       }
 
+      // Pixels a look-drag must move before we start rotating (prevents touchdown jitter)
+      const LOOK_THRESHOLD = 6;
+
+      function _resetLook() {
+        mobileLook.active  = false; mobileLook.id = null;
+        mobileLook.started = false;
+      }
+      function _resetJoy() {
+        mobileJoy.active    = false; mobileJoy.id = null;
+        mobileJoy.magnitude = 0;
+      }
+      function _resetPinch() {
+        mobilePinch.active = false; mobilePinch.id0 = null; mobilePinch.id1 = null;
+      }
+
       canvas.addEventListener("touchstart", e => {
-        e.preventDefault(); // block scroll, pinch-zoom, and delayed click on canvas
+        e.preventDefault();
+
+        // ── Two-finger pinch: takes over from any active single-touch gestures ──
+        if (e.touches.length >= 2) {
+          _resetJoy(); _resetLook();
+          const c0 = _tc(e.touches[0]);
+          const c1 = _tc(e.touches[1]);
+          const dist = Math.hypot(c1.x - c0.x, c1.y - c0.y);
+          mobilePinch.active   = true;
+          mobilePinch.lastDist = dist;
+          mobilePinch.id0      = e.touches[0].identifier;
+          mobilePinch.id1      = e.touches[1].identifier;
+          return; // do not process individual new touches as buttons/joy/look
+        }
 
         for (const t of e.changedTouches) {
           const { x, y } = _tc(t);
 
-          // ── If a full-screen popup is open, route touch as a synthetic click ──
-          // This lets all existing popup close buttons and tab clicks work with touch.
+          // ── Popup open: route as synthetic click ──
           if (journalOpen || equipmentOpen || keypadOpen || dangerTimerOpen || fourPanelOpen || corkBoardOpen) {
             canvas.dispatchEvent(new MouseEvent('click', {
               bubbles: true, cancelable: true,
@@ -1380,13 +1417,12 @@
             continue;
           }
 
-          // ── Camera view mode: any tap exits ──
+          // ── Camera view mode ──
           if (cameraViewMode) {
-            // Cycle cameras on left tap, exit on right tap
             const _cams = getPlacedCameras();
             if (x < canvas.width / 2 && _cams.length > 1) {
               cameraViewIndex = (cameraViewIndex - 1 + _cams.length) % _cams.length;
-            } else if (x >= canvas.width / 2 && _cams.length > 1 && x < canvas.width * 0.75) {
+            } else if (x < canvas.width * 0.75 && _cams.length > 1) {
               cameraViewIndex = (cameraViewIndex + 1) % _cams.length;
             } else {
               cameraViewMode = false;
@@ -1394,7 +1430,7 @@
             continue;
           }
 
-          // ── Action buttons (one-shot on press) ──
+          // ── Action buttons ──
           if (_hitBtn(x, y, MOB.interact))    { _fireKey(keybinds.interact);  continue; }
           if (_hitBtn(x, y, MOB.use))         { _fireKey(keybinds.use);       continue; }
           if (_hitBtn(x, y, MOB.journal))     { _fireKey(keybinds.journal);   continue; }
@@ -1402,51 +1438,74 @@
           if (_hitBtn(x, y, MOB.flashlight))  { _fireKey(keybinds.flashlight);continue; }
           if (_hitBtn(x, y, MOB.drop))        { _fireKey(keybinds.drop);      continue; }
 
-          // ── Sprint button (hold — stays active until finger lifts) ──
+          // ── Sprint button (hold) ──
           if (_hitBtn(x, y, MOB.sprint)) {
-            mobileSprinting = true;
-            mobileSprintId  = t.identifier;
-            continue;
+            mobileSprinting = true; mobileSprintId = t.identifier; continue;
           }
 
-          // ── Virtual joystick (left half of screen, lower portion) ──
+          // ── Joystick (left half, lower) ──
           if (x < 350 && y > 280 && !mobileJoy.active) {
-            mobileJoy.active = true;
-            mobileJoy.id     = t.identifier;
-            mobileJoy.baseX  = x;  mobileJoy.baseY = y; // floating base follows finger down
-            mobileJoy.curX   = x;  mobileJoy.curY  = y;
+            mobileJoy.active    = true;
+            mobileJoy.id        = t.identifier;
+            mobileJoy.baseX     = x; mobileJoy.baseY = y;
+            mobileJoy.curX      = x; mobileJoy.curY  = y;
+            mobileJoy.magnitude = 0;
             continue;
           }
 
-          // ── Look / rotate (everything else — right side or upper left) ──
+          // ── Look drag (right side / upper area — gated behind threshold) ──
           if (!mobileLook.active) {
-            mobileLook.active = true;
-            mobileLook.id     = t.identifier;
-            mobileLook.lastX  = x;
-            mobileLook.lastY  = y;
-            mobileAngleOverride = true;
+            mobileLook.active  = true;
+            mobileLook.id      = t.identifier;
+            mobileLook.startX  = x; mobileLook.startY = y;
+            mobileLook.lastX   = x; mobileLook.lastY  = y;
+            mobileLook.started = false; // rotation blocked until threshold crossed
           }
         }
       }, { passive: false });
 
       canvas.addEventListener("touchmove", e => {
         e.preventDefault();
+
+        // ── Pinch zoom ──
+        if (mobilePinch.active && e.touches.length >= 2) {
+          const t0 = Array.from(e.touches).find(t => t.identifier === mobilePinch.id0);
+          const t1 = Array.from(e.touches).find(t => t.identifier === mobilePinch.id1);
+          if (t0 && t1) {
+            const c0 = _tc(t0), c1 = _tc(t1);
+            const newDist = Math.hypot(c1.x - c0.x, c1.y - c0.y);
+            if (mobilePinch.lastDist > 0) {
+              const ratio = newDist / mobilePinch.lastDist;
+              // Apply zoom — same 0.8–3.0 range as keyboard +/-
+              gameZoom = Math.max(0.8, Math.min(3.0, gameZoom * ratio));
+            }
+            mobilePinch.lastDist = newDist;
+          }
+          return;
+        }
+
         for (const t of e.changedTouches) {
           const { x, y } = _tc(t);
 
-          // Update joystick knob
+          // Update joystick knob position
           if (t.identifier === mobileJoy.id) {
-            mobileJoy.curX = x;
-            mobileJoy.curY = y;
+            mobileJoy.curX = x; mobileJoy.curY = y;
           }
 
-          // Update look angle — delta-drag rotates playerAngle directly
+          // Update look drag — only apply rotation after threshold to prevent jitter
           if (t.identifier === mobileLook.id) {
-            const ddx = x - mobileLook.lastX;
-            mobileLook.lastX = x;
-            mobileLook.lastY = y;
-            // Rotate proportional to horizontal drag; 0.007 rad/px feels responsive
-            playerAngle += ddx * 0.007;
+            if (!mobileLook.started) {
+              const totalDrag = Math.hypot(x - mobileLook.startX, y - mobileLook.startY);
+              if (totalDrag >= LOOK_THRESHOLD) {
+                mobileLook.started = true;
+                // Anchor lastX here so the first processed delta isn't a jump
+                mobileLook.lastX = x; mobileLook.lastY = y;
+              }
+            } else {
+              const ddx = x - mobileLook.lastX;
+              mobileLook.lastX = x; mobileLook.lastY = y;
+              playerAngle += ddx * 0.007;
+            }
           }
         }
       }, { passive: false });
@@ -1454,17 +1513,17 @@
       function _touchEnd(e) {
         e.preventDefault();
         for (const t of e.changedTouches) {
-          if (t.identifier === mobileJoy.id)  { mobileJoy.active  = false; mobileJoy.id  = null; }
-          if (t.identifier === mobileLook.id) { mobileLook.active = false; mobileLook.id = null; mobileAngleOverride = false; }
-          if (t.identifier === mobileSprintId){ mobileSprinting   = false; mobileSprintId = null; }
+          if (t.identifier === mobileJoy.id)      _resetJoy();
+          if (t.identifier === mobileLook.id)     _resetLook();
+          if (t.identifier === mobileSprintId)  { mobileSprinting = false; mobileSprintId = null; }
+          if (t.identifier === mobilePinch.id0 ||
+              t.identifier === mobilePinch.id1)   _resetPinch();
         }
       }
       canvas.addEventListener("touchend",    _touchEnd, { passive: false });
       canvas.addEventListener("touchcancel", e => {
-        // Full reset on cancel (incoming call, tab switch, etc.)
-        mobileJoy.active = false;  mobileJoy.id  = null;
-        mobileLook.active = false; mobileLook.id = null; mobileAngleOverride = false;
-        mobileSprinting = false;   mobileSprintId = null;
+        _resetJoy(); _resetLook(); _resetPinch();
+        mobileSprinting = false; mobileSprintId = null;
       }, { passive: false });
     } // end if (isMobile)
 
@@ -1757,34 +1816,45 @@
       if (keys[keybinds.up]    || keys["ArrowUp"])    dy = -spd;
       if (keys[keybinds.down]  || keys["ArrowDown"])  dy =  spd;
 
-      // Mobile joystick contribution — adds to (or replaces) keyboard dx/dy
+      // Mobile joystick: face joystick direction + walk forward in that direction.
+      // Angle and magnitude are computed here so they're available for the facing update below.
       if (isMobile && mobileJoy.active) {
         const jdx = mobileJoy.curX - mobileJoy.baseX;
         const jdy = mobileJoy.curY - mobileJoy.baseY;
         const jLen = Math.hypot(jdx, jdy);
         const deadR = MOB.joy.deadR, maxR = MOB.joy.maxR;
         if (jLen > deadR) {
-          const t = Math.min((jLen - deadR) / (maxR - deadR), 1.0);
-          dx = (jdx / jLen) * spd * t;
-          dy = (jdy / jLen) * spd * t;
+          mobileJoy.angle     = Math.atan2(jdy, jdx);
+          mobileJoy.magnitude = Math.min((jLen - deadR) / (maxR - deadR), 1.0);
+          // Smoothly rotate player to face joystick direction (25% per frame ≈ ~10 frames to full turn)
+          let jAngleDiff = mobileJoy.angle - playerAngle;
+          while (jAngleDiff >  Math.PI) jAngleDiff -= Math.PI * 2;
+          while (jAngleDiff < -Math.PI) jAngleDiff += Math.PI * 2;
+          playerAngle += jAngleDiff * 0.25;
+          // Walk forward in the (now updated) facing direction
+          dx = Math.cos(playerAngle) * spd * mobileJoy.magnitude;
+          dy = Math.sin(playerAngle) * spd * mobileJoy.magnitude;
+        } else {
+          mobileJoy.magnitude = 0; // inside dead zone — no movement, no turn
         }
       }
 
-      // Track facing direction from mouse cursor — lerp rate controlled by sensitivity
-      // While placement preview is active, freeze playerAngle and rotate only the preview
-      // On mobile, look-drag updates playerAngle directly (mobileAngleOverride skips mouse lerp)
+      // ── Facing direction ──────────────────────────────────────────────────
+      // Desktop: lerp toward mouse cursor each frame.
+      // Mobile:  joystick block above handles facing when moving; look-drag handles it when
+      //          standing still (via direct playerAngle += in touchmove). No mouse lerp on mobile
+      //          — mouseX/mouseY are never updated on touch devices, which caused the spin-to-east bug.
       if (placementPreview.active) {
         const targetAngle = Math.atan2(mouseY - canvas.height / 2, mouseX - canvas.width / 2);
-        playerAngle               = placementPreview.lockedPlayerAngle; // frozen
-        placementPreview.angle    = targetAngle;                        // preview rotates freely
-      } else if (!mobileAngleOverride) {
+        playerAngle            = placementPreview.lockedPlayerAngle;
+        placementPreview.angle = targetAngle;
+      } else if (!isMobile) {
         const targetAngle = Math.atan2(mouseY - canvas.height / 2, mouseX - canvas.width / 2);
         let angleDiff = targetAngle - playerAngle;
         while (angleDiff >  Math.PI) angleDiff -= Math.PI * 2;
         while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
         playerAngle += angleDiff * Math.min(1.0, sensitivity * 0.3);
       }
-      // else: playerAngle was already updated in touchmove handler (mobile look-drag)
 
       // Move player — check walkable rects, allow wall sliding
       const nx = player.x + dx;
