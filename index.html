@@ -234,6 +234,24 @@
     let lostRound      = false;
     let equipmentOpen  = false; // van pegboard screen
     let dangerTimerOpen  = false; // van threat monitor popup
+    let hauntedMirrorOpen  = false; // haunted mirror vision overlay
+    let ouijaBoardOpen     = false; // ouija board interaction popup
+    let ouijaQuestionsAsked = 0;   // how many questions used this round (max 3)
+    let ouijaBroken        = false; // true after the 3rd question shatters the board
+    let ouijaPX = 280, ouijaPY = 155; // planchette position, board-local (offset from bx,by)
+    let ouijaTX = 280, ouijaTY = 155; // planchette lerp target, board-local
+    let ouijaSeq = [];             // current answer token sequence e.g. ['Y','E','S'] or ['YES']
+    let ouijaSeqIdx = -1;          // index into ouijaSeq currently being dwelt on (-1 = idle)
+    let ouijaSeqNextTime = 0;      // Date.now() when to advance to next token
+    let ouijaPendingBreak = false; // call _breakOuijaBoard() when this sequence finishes
+    let ouijaLastAnswer = "";      // text of last answer (for secondary display)
+    let ouijaCurrentQ = "";        // text of the question currently being answered
+    let ouijaAskedQIds = new Set();// IDs of questions already asked this round
+    let _ouijaMenuRects = [];      // [{id, rect}] rebuilt each draw frame for click hit-test
+    let mirrorActiveTimer  = 0;    // countdown while mirror is in active use
+    let mirrorBroken       = false; // true once mirror shatters
+    let _mirrorCanvas = null, _mirrorFogCanvas = null; // offscreen render targets for ghost-POV feed
+    let _mirrorRenderMode = false; // true only during mirror's renderCameraFeed call — suppresses orbs + green NV
     let fourPanelOpen    = false; // van four-panel monitor popup
     let corkBoardOpen    = false; // van cork board popup
     let pegScrollX     = 0;    // horizontal scroll offset for the equipment board
@@ -413,6 +431,16 @@
       dangerTimerOpen = false;
       fourPanelOpen   = false;
       corkBoardOpen   = false;
+      hauntedMirrorOpen = false;
+      ouijaBoardOpen      = false;
+      ouijaQuestionsAsked = 0;
+      ouijaBroken         = false;
+      ouijaPX = 280; ouijaPY = 155; ouijaTX = 280; ouijaTY = 155;
+      ouijaSeq = []; ouijaSeqIdx = -1; ouijaSeqNextTime = 0;
+      ouijaPendingBreak = false; ouijaLastAnswer = ""; ouijaCurrentQ = "";
+      ouijaAskedQIds = new Set(); _ouijaMenuRects = [];
+      mirrorActiveTimer = 0;
+      mirrorBroken      = false;
       lostRound      = false;
       safeTime           = SAFE_TIME;
       safeTimeOver       = false;
@@ -422,15 +450,18 @@
       selectedSlot = 0;
       flashlightOn = false;
       worldItems      = [];
-      // Always place the summoning circle as a fixed environment object (not pickupable)
-      const scItem = ITEMS.find(it => it.name === "Summoning Circle");
-      worldItems.push({ name: "Summoning Circle", x: scItem.spawnX, y: scItem.spawnY,
-                        facing: 0, active: false, written: false, writeAnimTimer: 0, fixed: true, candlesMask: 0 });
-      // Spawn one random non-circle cursed item in its fixed house location
-      const cursedPool = ITEMS.filter(it => it.category === "cursed" && it.name !== "Summoning Circle");
-      const cursedPick = cursedPool[Math.floor(Math.random() * cursedPool.length)];
-      worldItems.push({ name: cursedPick.name, x: cursedPick.spawnX, y: cursedPick.spawnY,
+      // Ouija board always spawns at its fixed location
+      const obItem = ITEMS.find(it => it.name === "Ouija Board");
+      worldItems.push({ name: obItem.name, x: obItem.spawnX, y: obItem.spawnY,
                         facing: 0, active: false, written: false, writeAnimTimer: 0 });
+      // One random cursed object from the full pool, excluding the Ouija board (already placed)
+      const cursedPool = ITEMS.filter(it => it.category === "cursed" && it.name !== "Ouija Board");
+      const cursedPick = cursedPool[Math.floor(Math.random() * cursedPool.length)];
+      // Summoning circle needs extra state flags; other cursed objects use standard world-item fields
+      const isCircle = cursedPick.name === "Summoning Circle";
+      worldItems.push({ name: cursedPick.name, x: cursedPick.spawnX, y: cursedPick.spawnY,
+                        facing: 0, active: false, written: false, writeAnimTimer: 0,
+                        ...(isCircle ? { fixed: true, candlesMask: 0 } : {}) });
       journalTab      = 0;
       evidenceStates  = {};
       ghostStates     = {};
@@ -507,7 +538,7 @@
                 sc.candlesMask = (sc.candlesMask ?? 0) | (1 << ci);
                 if (sc.candlesMask === 0b11111) {   // all 5 lit
                   sc.active = true;
-                  summoningCircleTimer = 2.5;
+                  summoningCircleTimer = 5;
                 }
               }
               return; // consumed — even if lighter not ready
@@ -671,6 +702,17 @@
         e.preventDefault();
         return;
       }
+      // Ouija board: 1–5 selects a question while the popup is open and idle
+      if (ouijaBoardOpen && !ouijaBroken && ouijaSeqIdx === -1 && gameRunning) {
+        const kn = parseInt(e.key);
+        if (!isNaN(kn) && kn >= 1 && kn <= 5) {
+          e.preventDefault();
+          const _avail = OUIJA_Q_POOL.filter(q => !ouijaAskedQIds.has(q.id));
+          if (_avail[kn - 1]) _ouijaAskQuestion(_avail[kn - 1]);
+          return;
+        }
+      }
+
       if (e.key.toLowerCase() === keybinds.journal) {
         if (gameRunning) journalOpen = !journalOpen;
       }
@@ -736,6 +778,20 @@
             spiritBoxListenTimer = 2.5;
             spiritBoxNoResponse  = false;
             spiritBoxTimer       = 0; // clear old response so new attempt is fresh
+          } else if (held === "Ouija Board" && !ouijaBroken) {
+            ouijaBoardOpen = !ouijaBoardOpen; // R toggles popup; questions chosen by 1-5 / click
+          } else if (held === "Haunted Mirror") {
+            if (mirrorBroken) {
+              // Broken mirror: R still toggles the broken view open/closed
+              hauntedMirrorOpen = !hauntedMirrorOpen;
+            } else if (!hauntedMirrorOpen) {
+              // Open; start timer on first use only — closing and reopening does NOT reset it
+              hauntedMirrorOpen = true;
+              if (mirrorActiveTimer <= 0) mirrorActiveTimer = 2.5 + Math.random() * 1.5;
+            } else {
+              // Close early — timer keeps running, next open resumes same countdown
+              hauntedMirrorOpen = false;
+            }
           } else if (held) {
             // All other held items (implemented or stub): toggle heldItemOn
             heldItemOn = !heldItemOn;
@@ -779,12 +835,14 @@
         if (e.code === "Minus" || e.code === "NumpadSubtract") gameZoom = Math.max(+(gameZoom - 0.2).toFixed(1), 0.8);
       }
       if (e.key === "Escape") {
-        if (keypadOpen)       { keypadOpen = false; return; }
-        if (equipmentOpen)    { equipmentOpen = false; return; }
-        if (dangerTimerOpen)  { dangerTimerOpen = false; return; }
-        if (fourPanelOpen)    { fourPanelOpen = false; return; }
-        if (corkBoardOpen)    { corkBoardOpen = false; return; }
-        if (journalOpen)      { journalOpen = false; return; }
+        if (keypadOpen)         { keypadOpen = false; return; }
+        if (equipmentOpen)      { equipmentOpen = false; return; }
+        if (dangerTimerOpen)    { dangerTimerOpen = false; return; }
+        if (fourPanelOpen)      { fourPanelOpen = false; return; }
+        if (corkBoardOpen)      { corkBoardOpen = false; return; }
+        if (ouijaBoardOpen)     { ouijaBoardOpen = false; return; }
+        if (hauntedMirrorOpen)  { hauntedMirrorOpen = false; return; }
+        if (journalOpen)        { journalOpen = false; return; }
         if (gameRunning || roundOver || lostRound) {
           roundOver = false; lostRound = false; showTitle();
         }
@@ -1800,7 +1858,7 @@
               if (corkBoardOpen   && panel === MOB_PANELS.corkBoard)   corkBoardOpen   = false;
               // Simpler: just close whatever is open
               journalOpen = false; equipmentOpen = false; keypadOpen = false;
-              dangerTimerOpen = false; fourPanelOpen = false; corkBoardOpen = false;
+              dangerTimerOpen = false; fourPanelOpen = false; corkBoardOpen = false; hauntedMirrorOpen = false;
               continue;
             }
 
@@ -2043,7 +2101,7 @@
         if (journalOpen || equipmentOpen || keypadOpen ||
             dangerTimerOpen || fourPanelOpen || corkBoardOpen) {
           journalOpen = false; equipmentOpen = false; keypadOpen = false;
-          dangerTimerOpen = false; fourPanelOpen = false; corkBoardOpen = false;
+          dangerTimerOpen = false; fourPanelOpen = false; corkBoardOpen = false; hauntedMirrorOpen = false;
         }
       }, { passive: true });
 
@@ -2060,6 +2118,15 @@
         if (safeTime <= 0) {
           safeTime     = 0;
           safeTimeOver = true;
+        }
+      }
+
+      // Haunted mirror countdown — only ticks while mirror is actively open
+      if (!mirrorBroken && hauntedMirrorOpen && mirrorActiveTimer > 0) {
+        mirrorActiveTimer -= delta;
+        if (mirrorActiveTimer <= 0) {
+          mirrorActiveTimer = 0;
+          mirrorBroken = true;
         }
       }
 
@@ -3607,6 +3674,30 @@
           ctx.fillStyle = "#d0a830"; ctx.fillRect(5,-1,3,2);
           ctx.fillStyle = "#e8c040"; ctx.beginPath(); ctx.arc(9,0,2.5,0,Math.PI*2); ctx.fill();
 
+        } else if (it.style === "ouija_shard") {
+          // Broken Ouija board shard — jagged splinter of dark walnut wood
+          // Three distinct shard shapes based on shardIndex
+          const si = it.shardIndex ?? 0;
+          ctx.fillStyle = "rgba(0,0,0,0.3)"; // shadow offset
+          if (si === 0) {
+            ctx.beginPath(); ctx.moveTo(2,1); ctx.lineTo(12,0); ctx.lineTo(10,7); ctx.lineTo(-1,8); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#2e1a08"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(11,-1); ctx.lineTo(9,6); ctx.lineTo(-2,7); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#5a3414"; ctx.beginPath(); ctx.moveTo(1,1); ctx.lineTo(9,0); ctx.lineTo(8,5); ctx.lineTo(0,5); ctx.closePath(); ctx.fill();
+          } else if (si === 1) {
+            ctx.beginPath(); ctx.moveTo(2,1); ctx.lineTo(9,2); ctx.lineTo(6,11); ctx.lineTo(-2,9); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#2e1a08"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(8,1); ctx.lineTo(5,10); ctx.lineTo(-3,8); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#5a3414"; ctx.beginPath(); ctx.moveTo(1,1); ctx.lineTo(6,2); ctx.lineTo(4,8); ctx.lineTo(-1,6); ctx.closePath(); ctx.fill();
+          } else {
+            ctx.beginPath(); ctx.moveTo(2,1); ctx.lineTo(14,3); ctx.lineTo(12,8); ctx.lineTo(1,9); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#2e1a08"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(13,2); ctx.lineTo(11,7); ctx.lineTo(0,8); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#5a3414"; ctx.beginPath(); ctx.moveTo(1,1); ctx.lineTo(11,3); ctx.lineTo(10,6); ctx.lineTo(1,6); ctx.closePath(); ctx.fill();
+          }
+          // faint gold letter fragment on larger shards
+          if (si !== 1) {
+            ctx.fillStyle = "rgba(180,140,40,0.4)"; ctx.font = "4px serif"; ctx.textAlign = "center";
+            ctx.fillText(si === 0 ? "YE" : "OUI", 5, 5); ctx.textAlign = "left";
+          }
+
         } else if (it.name === "Ouija Board") {
           // Flat rectangular board with lettering hint
           ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fillRect(-10,-7,22,14);
@@ -4305,7 +4396,7 @@
         if (sc) {
           const scCX = sc.x + 6, scCY = sc.y + 6;
           // Fade in first 0.3s, hold, fade out last 0.6s
-          const fadeIn  = Math.min(1, (2.5 - summoningCircleTimer) / 0.4);
+          const fadeIn  = Math.min(1, (5 - summoningCircleTimer) / 0.4);
           const fadeOut = Math.min(1, summoningCircleTimer / 0.8);
           const alpha   = Math.min(fadeIn, fadeOut);
 
@@ -5101,6 +5192,19 @@
       // Divide by CSS scale so click coordinates stay in the 800×600 logical space
       const mx = (e.clientX - rect.left) * (canvas.width  / rect.width);
       const my = (e.clientY - rect.top)  * (canvas.height / rect.height);
+
+      // ── Ouija board question menu click ───────────────────────────────────
+      if (ouijaBoardOpen && !ouijaBroken && ouijaSeqIdx === -1) {
+        for (const entry of _ouijaMenuRects) {
+          if (mx >= entry.rect.x && mx <= entry.rect.x + entry.rect.w &&
+              my >= entry.rect.y && my <= entry.rect.y + entry.rect.h) {
+            const q = OUIJA_Q_POOL.find(q => q.id === entry.id);
+            if (q) _ouijaAskQuestion(q);
+            return;
+          }
+        }
+        return; // click inside popup but outside a slot — consume without world interaction
+      }
 
       // ── Desktop: CCTV view — click anywhere closes it ──────────────────────
       if (!isMobile && cameraViewMode) { cameraViewMode = false; return; }
@@ -6062,6 +6166,526 @@
     }
 
     // --- Van Threat Monitor UI ---
+    // Returns board-local {x,y} (offset from bx,by) for a given answer token.
+    // Single char = letter/digit; "YES"/"NO"/"GOODBYE" = special board zones.
+    function _ouijaTokenPos(token) {
+      const BW = 560, LW = 38, NW = 42;
+      const L1 = "ABCDEFGHIJKLM", L2 = "NOPQRSTUVWXYZ", NR = "1234567890";
+      const t = (token || "").toUpperCase();
+      const i1 = L1.indexOf(t);
+      if (i1 >= 0) { const sx=(BW-13*LW)/2; return { x: sx+i1*LW+LW/2, y: 70+Math.sin((i1/12)*Math.PI)*-8 }; }
+      const i2 = L2.indexOf(t);
+      if (i2 >= 0) { const sx=(BW-13*LW)/2; return { x: sx+i2*LW+LW/2, y: 102+Math.sin((i2/12)*Math.PI)*-8 }; }
+      const iN = NR.indexOf(t);
+      if (iN >= 0) { const sx=(BW-10*NW)/2; return { x: sx+iN*NW+NW/2, y: 140 }; }
+      if (t === "YES")     return { x:  62, y: 183 };
+      if (t === "NO")      return { x: 498, y: 183 };
+      if (t === "GOODBYE") return { x: 280, y: 183 };
+      return { x: 280, y: 155 };
+    }
+
+    // Pool of 5 Ouija questions — each has a stable id and an answerFn that returns a token array.
+    const OUIJA_Q_POOL = [
+      { id: 0, text: "Are you here with us?",
+        answerFn: () => ["YES"] },
+      { id: 1, text: "Where do you roam?",
+        answerFn: () => {
+          const room = ghostFavRoom;
+          if (room && room.label) return room.label.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7).split('');
+          return ["NO"];
+        }},
+      { id: 2, text: "What is your name?",
+        answerFn: () => {
+          if (!currentGhost) return ["NO"];
+          return currentGhost.name.toUpperCase().replace(/[^A-Z]/g,'').slice(0,5).split('');
+        }},
+      { id: 3, text: "Do you want to hurt us?",
+        answerFn: () => ["YES"] },
+      { id: 4, text: "Will you leave us?",
+        answerFn: () => ["GOODBYE"] },
+    ];
+
+    // Ask a question from the pool — starts the answer animation, tracks spend state.
+    function _ouijaAskQuestion(q) {
+      if (ouijaBroken || ouijaSeqIdx >= 0 || ouijaAskedQIds.has(q.id)) return;
+      ouijaAskedQIds.add(q.id);
+      ouijaQuestionsAsked++;
+      ouijaCurrentQ = q.text;
+      const seq = q.answerFn();
+      _ouijaStartAnswer(seq, ouijaQuestionsAsked >= 3);
+    }
+
+    // Kicks off the planchette animation for an answer sequence.
+    // If pendingBreak is true, _breakOuijaBoard() fires when the sequence finishes.
+    function _ouijaStartAnswer(seq, pendingBreak) {
+      ouijaSeq          = seq;
+      ouijaSeqIdx       = 0;
+      ouijaPendingBreak = pendingBreak;
+      ouijaLastAnswer   = seq.join('');
+      const pos = _ouijaTokenPos(seq[0]);
+      ouijaTX = pos.x; ouijaTY = pos.y;
+      ouijaSeqNextTime  = Date.now() + 950; // ms to dwell on each token
+    }
+
+    function _breakOuijaBoard() {
+      ouijaBroken      = true;
+      ouijaBoardOpen   = false; // kick player out of popup immediately
+
+      // Remove Ouija Board from inventory; clear selection if it was selected
+      const idx = inventory.indexOf("Ouija Board");
+      if (idx >= 0) {
+        inventory.splice(idx, 1);
+        if (selectedSlot >= inventory.length) selectedSlot = Math.max(0, inventory.length - 1);
+      }
+
+      // Spawn 3 broken shard pieces near the player — fixed (not pickupable), no label
+      const scatter = [
+        { dx: -14, dy:  -8, rot: -0.4 },
+        { dx:   8, dy:  -4, rot:  0.6 },
+        { dx:  -4, dy:  14, rot:  1.2 },
+      ];
+      scatter.forEach((s, i) => {
+        worldItems.push({
+          name:       "",           // empty name → no label drawn
+          x:          player.x + s.dx,
+          y:          player.y + s.dy,
+          facing:     s.rot,
+          active:     false,
+          written:    false,
+          writeAnimTimer: 0,
+          fixed:      true,         // blocks all pickup paths
+          noLabel:    true,         // suppresses pickup prompt
+          style:      "ouija_shard",
+          shardIndex: i,
+        });
+      });
+    }
+
+    function drawOuijaBoard() {
+      const W = canvas.width, H = canvas.height;
+      const BW = 560, BH = 360; // board popup dimensions
+      const bx = (W - BW) / 2, by = (H - BH) / 2 + 10; // centered, slightly below mid
+
+      // Dark semi-transparent world vignette — world stays visible behind
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.62)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+
+      // ── Board body ────────────────────────────────────────────────────────
+      ctx.save();
+
+      // Drop shadow
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(bx + 6, by + 8, BW, BH);
+
+      // Board surface — dark walnut wood
+      const woodGrad = ctx.createLinearGradient(bx, by, bx, by + BH);
+      woodGrad.addColorStop(0,   "#2e1a08");
+      woodGrad.addColorStop(0.5, "#1e1005");
+      woodGrad.addColorStop(1,   "#2a1808");
+      ctx.fillStyle = woodGrad;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, BW, BH, 10);
+      ctx.fill();
+
+      // Subtle wood grain lines
+      ctx.strokeStyle = "rgba(255,200,120,0.05)";
+      ctx.lineWidth = 1;
+      for (let g = 0; g < BH; g += 18) {
+        ctx.beginPath();
+        ctx.moveTo(bx, by + g + Math.sin(g * 0.3) * 3);
+        ctx.lineTo(bx + BW, by + g + Math.sin(g * 0.3 + 1.2) * 3);
+        ctx.stroke();
+      }
+
+      // Board border — carved double-line frame
+      ctx.strokeStyle = "#8a6020"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.roundRect(bx + 4, by + 4, BW - 8, BH - 8, 8); ctx.stroke();
+      ctx.strokeStyle = "#c8a040"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(bx + 7, by + 7, BW - 14, BH - 14, 6); ctx.stroke();
+
+      // ── "OUIJA" title ─────────────────────────────────────────────────────
+      ctx.fillStyle = "#d4a840";
+      ctx.font = "bold 28px serif";
+      ctx.textAlign = "center";
+      ctx.fillText("OUIJA", W / 2, by + 42);
+      // Decorative small dots either side of title
+      ctx.fillStyle = "#a07828";
+      ctx.beginPath(); ctx.arc(W/2 - 78, by + 36, 3, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(W/2 + 78, by + 36, 3, 0, Math.PI*2); ctx.fill();
+
+      // Sun (top-left) and Moon (top-right) decorative symbols
+      ctx.font = "18px serif"; ctx.fillStyle = "#c8a030";
+      ctx.textAlign = "left";  ctx.fillText("☀", bx + 18, by + 44);
+      ctx.textAlign = "right"; ctx.fillText("☽", bx + BW - 18, by + 44);
+
+      // ── Animation update ──────────────────────────────────────────────────
+      const _now = Date.now();
+      // Smooth lerp planchette toward its target (board-local coords)
+      ouijaPX += (ouijaTX - ouijaPX) * 0.11;
+      ouijaPY += (ouijaTY - ouijaPY) * 0.11;
+      // Advance sequence when dwell time expires
+      if (ouijaSeqIdx >= 0 && _now >= ouijaSeqNextTime) {
+        ouijaSeqIdx++;
+        if (ouijaSeqIdx >= ouijaSeq.length) {
+          // Sequence complete — return to center, optionally break
+          ouijaSeqIdx = -1;
+          ouijaTX = 280; ouijaTY = 155;
+          if (ouijaPendingBreak) _breakOuijaBoard();
+        } else {
+          const _tp = _ouijaTokenPos(ouijaSeq[ouijaSeqIdx]);
+          ouijaTX = _tp.x; ouijaTY = _tp.y;
+          ouijaSeqNextTime = _now + 950;
+        }
+      }
+      // Current active token for highlighting letters/words on the board
+      const _activeTok = (ouijaSeqIdx >= 0 && ouijaSeq.length > 0) ? ouijaSeq[ouijaSeqIdx] : null;
+
+      // ── Alphabet rows (two rows: A-M, N-Z) ───────────────────────────────
+      const letters1 = "ABCDEFGHIJKLM".split("");
+      const letters2 = "NOPQRSTUVWXYZ".split("");
+      const letterW  = 38;
+      const row1X = bx + (BW - letters1.length * letterW) / 2;
+      const row2X = bx + (BW - letters2.length * letterW) / 2;
+      const row1Y = by + 70, row2Y = by + 102;
+
+      function drawLetterRow(letters, startX, rowY) {
+        letters.forEach((ch, i) => {
+          const lx = startX + i * letterW + letterW / 2;
+          const arcOff = Math.sin((i / (letters.length - 1)) * Math.PI) * -8;
+          const isActive = _activeTok === ch;
+          if (isActive) {
+            // Glow highlight behind active letter
+            ctx.fillStyle = "rgba(255,230,60,0.28)";
+            ctx.fillRect(lx - 13, rowY + arcOff - 14, 26, 20);
+          }
+          ctx.fillStyle = isActive ? "#fff470" : "#e8d090";
+          ctx.font = isActive ? "bold 15px serif" : "bold 14px serif";
+          ctx.textAlign = "center";
+          ctx.fillText(ch, lx, rowY + arcOff);
+        });
+      }
+      drawLetterRow(letters1, row1X, row1Y);
+      drawLetterRow(letters2, row2X, row2Y);
+
+      // ── Numbers row ───────────────────────────────────────────────────────
+      const numbers = "1234567890".split("");
+      const numW = 42;
+      const numStartX = bx + (BW - numbers.length * numW) / 2;
+      const numY = by + 140;
+      numbers.forEach((n, i) => {
+        const isActive = _activeTok === n;
+        if (isActive) {
+          ctx.fillStyle = "rgba(255,230,60,0.28)";
+          ctx.fillRect(numStartX + i * numW + 3, numY - 14, numW - 6, 18);
+        }
+        ctx.fillStyle = isActive ? "#fff470" : "#c8b870";
+        ctx.font = "13px serif"; ctx.textAlign = "center";
+        ctx.fillText(n, numStartX + i * numW + numW / 2, numY);
+      });
+
+      // ── YES / NO ──────────────────────────────────────────────────────────
+      const yesActive = _activeTok === "YES", noActive = _activeTok === "NO";
+      if (yesActive) { ctx.fillStyle="rgba(255,230,60,0.28)"; ctx.fillRect(bx+28, by+170, 68, 24); }
+      if (noActive)  { ctx.fillStyle="rgba(255,230,60,0.28)"; ctx.fillRect(bx+BW-96, by+170, 60, 24); }
+      ctx.font = "bold 20px serif";
+      ctx.textAlign = "left";  ctx.fillStyle = yesActive ? "#fff470" : "#d4a840"; ctx.fillText("YES", bx + 40, by + 188);
+      ctx.textAlign = "right"; ctx.fillStyle = noActive  ? "#fff470" : "#d4a840"; ctx.fillText("NO",  bx + BW - 40, by + 188);
+
+      // ── GOODBYE ───────────────────────────────────────────────────────────
+      const gbActive = _activeTok === "GOODBYE";
+      if (gbActive) { ctx.fillStyle="rgba(255,230,60,0.22)"; ctx.fillRect(W/2-50, by+172, 100, 22); }
+      ctx.font = "italic 15px serif"; ctx.textAlign = "center";
+      ctx.fillStyle = gbActive ? "#fff470" : "#9a7828";
+      ctx.fillText("GOODBYE", W / 2, by + 188);
+
+      // Decorative separator line under main content
+      ctx.strokeStyle = "#5a3e10"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx + 30, by + 200); ctx.lineTo(bx + BW - 30, by + 200); ctx.stroke();
+
+      // ── Question zone (below separator) ──────────────────────────────────
+      // Answering: show current question + answer text; menu is hidden.
+      // Idle: show numbered question menu — rebuild _ouijaMenuRects for click detection.
+      const _menuTop = by + 206;
+      if (ouijaSeqIdx >= 0) {
+        // Board is speaking — display question being answered + answer text
+        if (ouijaCurrentQ) {
+          ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(bx + 20, _menuTop, BW - 40, 18);
+          ctx.fillStyle = "#c8a060"; ctx.font = "italic 11px serif"; ctx.textAlign = "center";
+          ctx.fillText(`"${ouijaCurrentQ}"`, W / 2, _menuTop + 13);
+        }
+        if (ouijaLastAnswer) {
+          ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(bx + BW/2 - 80, _menuTop + 22, 160, 14);
+          ctx.fillStyle = "#d4a040"; ctx.font = "bold 11px monospace"; ctx.textAlign = "center";
+          ctx.fillText(ouijaLastAnswer, W / 2, _menuTop + 33);
+        }
+      } else {
+        // Idle — show question menu
+        _ouijaMenuRects = [];
+        const _avail = OUIJA_Q_POOL.filter(q => !ouijaAskedQIds.has(q.id));
+        const _rowH = 17, _padX = 22;
+        _avail.forEach((q, i) => {
+          const ry = _menuTop + i * _rowH;
+          const isHovered = false; // keyboard-only hover not needed; click handles it
+          // Row background
+          ctx.fillStyle = "rgba(80,45,10,0.5)";
+          ctx.fillRect(bx + _padX, ry, BW - _padX * 2, _rowH - 2);
+          // Number badge
+          ctx.fillStyle = "#e8c060"; ctx.font = "bold 11px monospace"; ctx.textAlign = "left";
+          ctx.fillText(`${i + 1}`, bx + _padX + 5, ry + 12);
+          // Question text
+          ctx.fillStyle = "#d4b870"; ctx.font = "11px serif";
+          ctx.fillText(q.text, bx + _padX + 20, ry + 12);
+          // Store rect for click detection (screen coords)
+          _ouijaMenuRects.push({ id: q.id, rect: { x: bx + _padX, y: ry, w: BW - _padX * 2, h: _rowH - 2 } });
+        });
+        if (_avail.length === 0) {
+          ctx.fillStyle = "#806040"; ctx.font = "italic 11px serif"; ctx.textAlign = "center";
+          ctx.fillText("The board is spent.", W / 2, _menuTop + 14);
+        }
+      }
+
+      // ── Planchette ────────────────────────────────────────────────────────
+      // Position: board-local with optional idle drift when not animating
+      const _pt = _now / 900;
+      const px = bx + ouijaPX + (ouijaSeqIdx === -1 ? Math.sin(_pt * 0.7) * 9 : 0);
+      const py = by + ouijaPY + (ouijaSeqIdx === -1 ? Math.cos(_pt * 0.5) * 5 : 0);
+      const pr = 22;
+
+      // Planchette shadow
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath();
+      ctx.ellipse(px + 3, py + 4, pr * 0.9, pr * 0.65, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Planchette body — warm ivory; faint amber glow when actively answering
+      const pGrad = ctx.createRadialGradient(px - 4, py - 4, 2, px, py, pr);
+      pGrad.addColorStop(0,   ouijaSeqIdx >= 0 ? "#fff8d0" : "#f0e8c8");
+      pGrad.addColorStop(0.6, "#c8b880");
+      pGrad.addColorStop(1,   "#a09050");
+      ctx.fillStyle = pGrad;
+      ctx.beginPath();
+      ctx.moveTo(px, py - pr);
+      ctx.bezierCurveTo(px + pr * 1.1, py - pr, px + pr, py + pr * 0.4, px, py + pr);
+      ctx.bezierCurveTo(px - pr, py + pr * 0.4, px - pr * 1.1, py - pr, px, py - pr);
+      ctx.closePath();
+      ctx.fill();
+
+      // Planchette border — brighter when moving
+      ctx.strokeStyle = ouijaSeqIdx >= 0 ? "#e0b040" : "#806030"; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(px, py - pr);
+      ctx.bezierCurveTo(px + pr * 1.1, py - pr, px + pr, py + pr * 0.4, px, py + pr);
+      ctx.bezierCurveTo(px - pr, py + pr * 0.4, px - pr * 1.1, py - pr, px, py - pr);
+      ctx.closePath();
+      ctx.stroke();
+
+      // Viewing hole
+      ctx.fillStyle = "rgba(10,5,2,0.85)";
+      ctx.beginPath(); ctx.arc(px, py - 4, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = ouijaSeqIdx >= 0 ? "#ffdd60" : "#c0a050"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(px, py - 4, 6, 0, Math.PI * 2); ctx.stroke();
+
+      // ── Footer ────────────────────────────────────────────────────────────
+      ctx.fillStyle = "rgba(100,60,10,0.75)";
+      ctx.fillRect(bx, by + BH - 26, BW, 26);
+      ctx.beginPath(); ctx.roundRect(bx, by + BH - 26, BW, 26, [0, 0, 10, 10]); ctx.fill();
+      ctx.fillStyle = "#c8a050"; ctx.font = "11px monospace"; ctx.textAlign = "center";
+      const _used = ouijaQuestionsAsked, _lim = 3;
+      const _footerText = ouijaSeqIdx >= 0
+        ? "... the board speaks ..."
+        : `[1-5] choose question   [R] put down   ${_used}/${_lim} asked`;
+      ctx.fillText(_footerText, W / 2, by + BH - 9);
+
+      ctx.textAlign = "left";
+      ctx.restore();
+    }
+
+    function drawHauntedMirror() {
+      const W = canvas.width, H = canvas.height;
+      const cx = W / 2, cy = H / 2 - 20;
+      const rx = 210, ry = 260; // oval half-widths
+
+      // Soft dark vignette outside the oval — world stays visible, just dimmed
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillRect(0, 0, W, H);
+      // Cut out the oval via destination-out
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+
+      // Mirror interior — clipped to oval; branches on broken state
+      ctx.save();
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.clip();
+
+      if (mirrorBroken) {
+        // ── Broken mirror: black void with purple cracks ──────────────────
+        ctx.fillStyle = "#050005"; ctx.fillRect(cx - rx, cy - ry, rx * 2, ry * 2);
+
+        // Faint deep-purple glow at center (residual energy)
+        const brokenGlow = ctx.createRadialGradient(cx, cy, 5, cx, cy, 120);
+        brokenGlow.addColorStop(0, "rgba(80,0,120,0.22)");
+        brokenGlow.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = brokenGlow; ctx.fillRect(cx - rx, cy - ry, rx * 2, ry * 2);
+
+        // Purple crack lines radiating from a central impact point
+        const impactX = cx + 18, impactY = cy - 25;
+        const crackAngles = [0, 0.42, 0.95, 1.55, 2.1, 2.65, 3.3, 3.9, 4.6, 5.2];
+        ctx.strokeStyle = "#7030a0"; ctx.lineWidth = 1.5; ctx.lineCap = "round";
+        crackAngles.forEach((a, i) => {
+          const len = 60 + (i % 3) * 55;
+          const jog = (i % 2 === 0) ? 0.18 : -0.14; // slight direction change mid-crack
+          const mx1 = impactX + Math.cos(a) * len * 0.45;
+          const my1 = impactY + Math.sin(a) * len * 0.45;
+          ctx.beginPath();
+          ctx.moveTo(impactX, impactY);
+          ctx.lineTo(mx1, my1);
+          ctx.lineTo(impactX + Math.cos(a + jog) * len, impactY + Math.sin(a + jog) * len);
+          ctx.stroke();
+        });
+        // Thin secondary cracks branching off some main ones
+        ctx.lineWidth = 0.7; ctx.strokeStyle = "#5020708";
+        ctx.strokeStyle = "#501870";
+        [[1.2, 80, 1.6, 40], [3.0, 95, 3.5, 35], [4.9, 70, 5.3, 28]].forEach(([a, l, a2, l2]) => {
+          const bx = impactX + Math.cos(a) * l * 0.6, by = impactY + Math.sin(a) * l * 0.6;
+          ctx.beginPath(); ctx.moveTo(bx, by);
+          ctx.lineTo(bx + Math.cos(a2) * l2, by + Math.sin(a2) * l2);
+          ctx.stroke();
+        });
+        // Impact glint
+        ctx.fillStyle = "rgba(180,80,255,0.35)";
+        ctx.beginPath(); ctx.arc(impactX, impactY, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "rgba(255,200,255,0.6)";
+        ctx.beginPath(); ctx.arc(impactX, impactY, 1.5, 0, Math.PI * 2); ctx.fill();
+
+      } else {
+        // ── Working mirror: ghost-POV feed ────────────────────────────────
+        // Tunable parameters
+        const MIRROR_ZOOM        = 2.7;   // ~1.7× prior zoom — tighter framing around ghost
+        const MIRROR_DRIFT_AMP   = 1.2;   // px — subtle camera float (less jitter at lower zoom)
+        const MIRROR_VIGNETTE_A  = 0.35;  // softer edge darkening so room layout stays visible
+
+        // Offscreen canvas matches the oval bounding box exactly (MW × MH).
+        // renderCameraFeed places the ghost at the canvas center (MW/2, MH/2),
+        // so the cone fans out in all directions — no dead-zone crop issue.
+        const MW = rx * 2, MH = ry * 2;
+        if (!_mirrorCanvas || _mirrorCanvas.width !== MW || _mirrorCanvas.height !== MH) {
+          _mirrorCanvas    = document.createElement("canvas");
+          _mirrorCanvas.width = MW; _mirrorCanvas.height = MH;
+          _mirrorFogCanvas = document.createElement("canvas");
+          _mirrorFogCanvas.width = MW; _mirrorFogCanvas.height = MH;
+        }
+        const mCtx = _mirrorCanvas.getContext("2d");
+        const mFog = _mirrorFogCanvas.getContext("2d");
+
+        if (currentGhost) {
+          // ── TESTING MODE: full 360° overhead view centered on ghost ──────
+          // Bypasses renderCameraFeed (which applies narrow 60° cone fog).
+          // Renders world directly, ghost visible at center, full surroundings.
+          const sx = MW / 2, sy = MH / 2; // canvas center = ghost world position
+
+          mCtx.fillStyle = "#050508";
+          mCtx.fillRect(0, 0, MW, MH);
+          mCtx.save();
+          mCtx.translate(sx, sy);
+          mCtx.scale(MIRROR_ZOOM, MIRROR_ZOOM);
+          mCtx.translate(-ghostX, -ghostY);
+
+          // Walls + room floors
+          mCtx.fillStyle = "#2a1f14";
+          walls.forEach(w => mCtx.fillRect(w.x, w.y, w.w, w.h));
+          rooms.forEach(r => { mCtx.fillStyle = r.color; mCtx.fillRect(r.x, r.y, r.w, r.h); });
+
+          // Doors (closed = solid block)
+          doors.forEach(d => {
+            if (!d.open) {
+              mCtx.fillStyle = "#5a3a18"; mCtx.fillRect(d.x, d.y, d.w, d.h);
+              mCtx.fillStyle = "#7a5230"; mCtx.fillRect(d.x+1, d.y+1, d.w-2, d.h-2);
+            }
+          });
+
+          // World items — dot + name
+          worldItems.forEach(it => {
+            const ix = it.x + 6, iy = it.y + 6;
+            mCtx.fillStyle = itemColors[it.name] || "#888";
+            mCtx.beginPath(); mCtx.arc(ix, iy, 4, 0, Math.PI * 2); mCtx.fill();
+          });
+
+          // Player — small warm dot
+          mCtx.fillStyle = "rgba(220,180,120,0.8)";
+          mCtx.beginPath(); mCtx.arc(player.x + 8, player.y + 8, 6, 0, Math.PI * 2); mCtx.fill();
+
+          // Ghost — bright centered marker so it is unmistakeable
+          // Body: glowing white circle
+          const gGlow = mCtx.createRadialGradient(ghostX, ghostY, 0, ghostX, ghostY, 22);
+          gGlow.addColorStop(0,   "rgba(255,255,255,0.95)");
+          gGlow.addColorStop(0.4, "rgba(200,230,255,0.7)");
+          gGlow.addColorStop(1,   "rgba(160,200,255,0)");
+          mCtx.fillStyle = gGlow;
+          mCtx.beginPath(); mCtx.arc(ghostX, ghostY, 22, 0, Math.PI * 2); mCtx.fill();
+          // Solid core
+          mCtx.fillStyle = "rgba(230,240,255,0.95)";
+          mCtx.beginPath(); mCtx.arc(ghostX, ghostY, 9, 0, Math.PI * 2); mCtx.fill();
+
+          mCtx.restore();
+
+          // 360° radial fog — fully clear in center, fades at oval edge
+          mFog.clearRect(0, 0, MW, MH);
+          const radFog = mFog.createRadialGradient(sx, sy, rx * 0.55, sx, sy, Math.max(rx, ry) * 1.1);
+          radFog.addColorStop(0,   "rgba(0,0,0,0)");
+          radFog.addColorStop(0.7, "rgba(0,0,0,0.25)");
+          radFog.addColorStop(1,   "rgba(0,0,0,0.88)");
+          mFog.fillStyle = radFog;
+          mFog.fillRect(0, 0, MW, MH);
+          mCtx.drawImage(mFog.canvas, 0, 0);
+
+          // Stamp into mirror oval with grayscale infrared filter
+          ctx.filter = 'grayscale(1) brightness(1.6) contrast(1.15) sepia(1) hue-rotate(240deg) saturate(2.5)';
+          ctx.drawImage(_mirrorCanvas, cx - rx, cy - ry);
+          ctx.filter = 'none';
+
+          // Subtle pulsing vignette at oval edge
+          const flicker = 0.08 * Math.sin(Date.now() / 130);
+          const vig = ctx.createRadialGradient(cx, cy, 40, cx, cy, Math.max(rx, ry) * 1.05);
+          vig.addColorStop(0,   "rgba(0,0,0,0)");
+          vig.addColorStop(0.75, "rgba(0,0,0,0.05)");
+          vig.addColorStop(1,   `rgba(5,0,10,${MIRROR_VIGNETTE_A + flicker})`);
+          ctx.fillStyle = vig; ctx.fillRect(cx - rx, cy - ry, MW, MH);
+
+        } else {
+          // Ghost not yet spawned — dark purple void
+          ctx.fillStyle = "#0a0015"; ctx.fillRect(cx - rx, cy - ry, rx * 2, ry * 2);
+        }
+      }
+
+      ctx.restore();
+
+      // Oval frame — ornate dark silver border
+      ctx.save();
+      ctx.strokeStyle = "#2a1840"; ctx.lineWidth = 14;
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx + 7, ry + 7, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = "#5a3880"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx + 7, ry + 7, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = "#8050b0"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx + 2, ry + 2, 0, 0, Math.PI * 2); ctx.stroke();
+      // Inner edge glow
+      ctx.strokeStyle = "rgba(180,80,255,0.25)"; ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx - 4, ry - 4, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+
+      // Close hint
+      ctx.save();
+      ctx.fillStyle = mirrorBroken ? "rgba(40,0,60,0.8)" : "rgba(100,50,150,0.7)";
+      ctx.fillRect(cx - 66, cy + ry + 10, 132, 20);
+      ctx.fillStyle = mirrorBroken ? "#a060c0" : "#c0a0e0";
+      ctx.font = "10px monospace"; ctx.textAlign = "center";
+      ctx.fillText(mirrorBroken ? "[ MIRROR BROKEN ] — ESC" : "[ ESC ] close", cx, cy + ry + 24);
+      ctx.textAlign = "left";
+      ctx.restore();
+    }
+
     function drawDangerTimer() {
       // Backdrop
       ctx.fillStyle = "rgba(0,0,0,0.78)";
@@ -6710,7 +7334,8 @@
       // Ghost Orbs — drawn in world space BEFORE restore and BEFORE fog stamp.
       // _applyCameraConeFog below handles cone clipping + door occlusion — no extra clip needed.
       // Orbs are dim when the room light is off and NV is off; fully visible with NV on.
-      if (ghostOrbs.length > 0) {
+      // Skipped during mirror render — orbs are camera-only evidence.
+      if (ghostOrbs.length > 0 && !_mirrorRenderMode) {
         const orbRoomIdx = ghostFavRoom ? rooms.indexOf(ghostFavRoom) : -1;
         const orbRoomLit = orbRoomIdx >= 0 ? (roomLights[orbRoomIdx]?.on ?? true) : true;
         const orbDimmed  = !orbRoomLit && !cameraNightVision;
@@ -7102,6 +7727,8 @@
         if (cameraViewMode) { drawCameraView(); drawMobileControls(); }
         else {
           draw();
+          if (ouijaBoardOpen)    drawOuijaBoard();
+          if (hauntedMirrorOpen) drawHauntedMirror();
           if (journalOpen)      drawJournal();
           if (equipmentOpen)    drawEquipment();
           if (dangerTimerOpen)  drawDangerTimer();
