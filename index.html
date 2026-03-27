@@ -238,8 +238,8 @@
     let ouijaBoardOpen     = false; // ouija board interaction popup
     let ouijaQuestionsAsked = 0;   // how many questions used this round (max 3)
     let ouijaBroken        = false; // true after the 3rd question shatters the board
-    let ouijaPX = 280, ouijaPY = 155; // planchette position, board-local (offset from bx,by)
-    let ouijaTX = 280, ouijaTY = 155; // planchette lerp target, board-local
+    let ouijaPX = 350, ouijaPY = 155; // planchette position, board-local (offset from bx,by)
+    let ouijaTX = 350, ouijaTY = 155; // planchette lerp target, board-local
     let ouijaSeq = [];             // current answer token sequence e.g. ['Y','E','S'] or ['YES']
     let ouijaSeqIdx = -1;          // index into ouijaSeq currently being dwelt on (-1 = idle)
     let ouijaSeqNextTime = 0;      // Date.now() when to advance to next token
@@ -248,6 +248,12 @@
     let ouijaCurrentQ = "";        // text of the question currently being answered
     let ouijaAskedQIds = new Set();// IDs of questions already asked this round
     let _ouijaMenuRects = [];      // [{id, rect}] rebuilt each draw frame for click hit-test
+
+    // ── Voodoo Doll state ─────────────────────────────────────────────────
+    const VOODOO_TOTAL_PINS = 10; // total pins (last one is the heart pin)
+    let voodooPinsLeft  = VOODOO_TOTAL_PINS; // pins remaining this round
+    let voodooSpent     = false;             // true when all pins used
+    let voodooCooldown  = 0;                 // seconds until next pin can be pushed (anti-spam)
     let mirrorActiveTimer  = 0;    // countdown while mirror is in active use
     let mirrorBroken       = false; // true once mirror shatters
     let _mirrorCanvas = null, _mirrorFogCanvas = null; // offscreen render targets for ghost-POV feed
@@ -435,10 +441,11 @@
       ouijaBoardOpen      = false;
       ouijaQuestionsAsked = 0;
       ouijaBroken         = false;
-      ouijaPX = 280; ouijaPY = 155; ouijaTX = 280; ouijaTY = 155;
+      ouijaPX = 350; ouijaPY = 155; ouijaTX = 350; ouijaTY = 155;
       ouijaSeq = []; ouijaSeqIdx = -1; ouijaSeqNextTime = 0;
       ouijaPendingBreak = false; ouijaLastAnswer = ""; ouijaCurrentQ = "";
       ouijaAskedQIds = new Set(); _ouijaMenuRects = [];
+      voodooPinsLeft = VOODOO_TOTAL_PINS; voodooSpent = false; voodooCooldown = 0;
       mirrorActiveTimer = 0;
       mirrorBroken      = false;
       lostRound      = false;
@@ -450,15 +457,10 @@
       selectedSlot = 0;
       flashlightOn = false;
       worldItems      = [];
-      // Ouija board always spawns at its fixed location
-      const obItem = ITEMS.find(it => it.name === "Ouija Board");
-      worldItems.push({ name: obItem.name, x: obItem.spawnX, y: obItem.spawnY,
-                        facing: 0, active: false, written: false, writeAnimTimer: 0 });
-      // One random cursed object from the full pool, excluding the Ouija board (already placed)
-      const cursedPool = ITEMS.filter(it => it.category === "cursed" && it.name !== "Ouija Board");
+      // One random cursed object from the full pool (all 7 equally likely)
+      const cursedPool = ITEMS.filter(it => it.category === "cursed");
       const cursedPick = cursedPool[Math.floor(Math.random() * cursedPool.length)];
-      // Summoning circle needs extra state flags; other cursed objects use standard world-item fields
-      const isCircle = cursedPick.name === "Summoning Circle";
+      const isCircle   = cursedPick.name === "Summoning Circle";
       worldItems.push({ name: cursedPick.name, x: cursedPick.spawnX, y: cursedPick.spawnY,
                         facing: 0, active: false, written: false, writeAnimTimer: 0,
                         ...(isCircle ? { fixed: true, candlesMask: 0 } : {}) });
@@ -778,6 +780,8 @@
             spiritBoxListenTimer = 2.5;
             spiritBoxNoResponse  = false;
             spiritBoxTimer       = 0; // clear old response so new attempt is fresh
+          } else if (held === "Voodoo Doll" && !voodooSpent) {
+            _triggerVoodooPinEvent(); // push one pin
           } else if (held === "Ouija Board" && !ouijaBroken) {
             ouijaBoardOpen = !ouijaBoardOpen; // R toggles popup; questions chosen by 1-5 / click
           } else if (held === "Haunted Mirror") {
@@ -2129,6 +2133,9 @@
           mirrorBroken = true;
         }
       }
+
+      // Voodoo Doll cooldown tick
+      if (voodooCooldown > 0) voodooCooldown -= delta;
 
 
       let dx = 0, dy = 0;
@@ -3715,22 +3722,33 @@
 
         } else if (it.name === "Voodoo Doll") {
           // Rough cloth figure
+          const _spent = voodooSpent;
           ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fillRect(-5,-9,12,18);
-          ctx.fillStyle = "#8a6850"; ctx.fillRect(-4,-8,10,16);  // body burlap
-          ctx.fillStyle = "#a07860"; ctx.fillRect(-3,-7,8,14);   // body highlight
-          // head (circle)
-          ctx.fillStyle = "#8a6850"; ctx.beginPath(); ctx.arc(1,-10,4,0,Math.PI*2); ctx.fill();
-          ctx.fillStyle = "#a07860"; ctx.beginPath(); ctx.arc(1,-10,3,0,Math.PI*2); ctx.fill();
-          // X eyes
+          ctx.fillStyle = _spent ? "#5a4030" : "#8a6850"; ctx.fillRect(-4,-8,10,16);
+          ctx.fillStyle = _spent ? "#6a5040" : "#a07860"; ctx.fillRect(-3,-7,8,14);
+          ctx.fillStyle = _spent ? "#5a4030" : "#8a6850"; ctx.beginPath(); ctx.arc(1,-10,4,0,Math.PI*2); ctx.fill();
+          ctx.fillStyle = _spent ? "#6a5040" : "#a07860"; ctx.beginPath(); ctx.arc(1,-10,3,0,Math.PI*2); ctx.fill();
           ctx.strokeStyle = "#3a2010"; ctx.lineWidth = 0.8;
           ctx.beginPath(); ctx.moveTo(-1,-11); ctx.lineTo(0,-10); ctx.stroke();
           ctx.beginPath(); ctx.moveTo(0,-11); ctx.lineTo(-1,-10); ctx.stroke();
           ctx.beginPath(); ctx.moveTo(2,-11); ctx.lineTo(3,-10); ctx.stroke();
           ctx.beginPath(); ctx.moveTo(3,-11); ctx.lineTo(2,-10); ctx.stroke();
-          // pins
-          ctx.strokeStyle = "#c0c0c0"; ctx.lineWidth = 0.8;
-          ctx.beginPath(); ctx.moveTo(3,-4); ctx.lineTo(7,-4); ctx.stroke();
-          ctx.fillStyle = "#e0e0e0"; ctx.beginPath(); ctx.arc(7,-4,1.2,0,Math.PI*2); ctx.fill();
+          // Show remaining pins as small silver needles stuck in the body
+          const _pinsToShow = Math.min(voodooPinsLeft, 5); // show up to 5 at a time
+          for (let _pi = 0; _pi < _pinsToShow; _pi++) {
+            const _px = -2 + _pi * 2.2;
+            const _py = -5 + (_pi % 2) * 2;
+            ctx.strokeStyle = "#c8c8c8"; ctx.lineWidth = 0.8;
+            ctx.beginPath(); ctx.moveTo(_px, _py); ctx.lineTo(_px + 3, _py - 3); ctx.stroke();
+            ctx.fillStyle = "#e8e8e8"; ctx.beginPath(); ctx.arc(_px + 3, _py - 3, 1, 0, Math.PI*2); ctx.fill();
+          }
+          // Heart on chest if heart pin still available (last pin)
+          if (!_spent) {
+            ctx.fillStyle = voodooPinsLeft === 1 ? "#e02020" : "rgba(200,40,40,0.5)";
+            ctx.font = "5px serif"; ctx.textAlign = "center";
+            ctx.fillText("♥", 1, -1);
+            ctx.textAlign = "left";
+          }
 
         } else if (it.name === "Haunted Mirror") {
           // Oval mirror with dark frame
@@ -5104,13 +5122,21 @@
           ctx.textAlign="left";
         } else if (heldForDisplay === "Voodoo Doll") {
           // burlap doll shape
-          ctx.fillStyle = "#8a6840"; ctx.beginPath(); ctx.arc(0,-7,3.5,0,Math.PI*2); ctx.fill(); // head
-          ctx.fillStyle = "#7a5830"; ctx.fillRect(-3,-4,6,9); // body
-          ctx.fillStyle = "#8a6840"; ctx.fillRect(-5,-3,2,5); ctx.fillRect(3,-3,2,5); // arms
-          ctx.fillStyle = "#7a5830"; ctx.fillRect(-2,5,2,5); ctx.fillRect(0,5,2,5); // legs
-          ctx.strokeStyle = "#c03020"; ctx.lineWidth=0.8;
-          ctx.beginPath();ctx.moveTo(-1,-8);ctx.lineTo(2,2);ctx.stroke(); // pin
-          ctx.fillStyle="#c03020"; ctx.beginPath();ctx.arc(-1,-8,1.2,0,Math.PI*2);ctx.fill();
+          const _vs = voodooSpent;
+          ctx.fillStyle = _vs ? "#5a4030" : "#8a6840"; ctx.beginPath(); ctx.arc(0,-7,3.5,0,Math.PI*2); ctx.fill();
+          ctx.fillStyle = _vs ? "#4a3020" : "#7a5830"; ctx.fillRect(-3,-4,6,9);
+          ctx.fillStyle = _vs ? "#5a4030" : "#8a6840"; ctx.fillRect(-5,-3,2,5); ctx.fillRect(3,-3,2,5);
+          ctx.fillStyle = _vs ? "#4a3020" : "#7a5830"; ctx.fillRect(-2,5,2,5); ctx.fillRect(0,5,2,5);
+          if (!_vs && voodooPinsLeft > 0) {
+            ctx.strokeStyle = "#c8c8c8"; ctx.lineWidth=0.8;
+            ctx.beginPath();ctx.moveTo(-1,-5);ctx.lineTo(2,1);ctx.stroke();
+            ctx.fillStyle="#e8e8e8"; ctx.beginPath();ctx.arc(-1,-5,1,0,Math.PI*2);ctx.fill();
+          }
+          // Pin counter label
+          ctx.fillStyle = _vs ? "#806050" : (voodooPinsLeft === 1 ? "#e05040" : "#c8a060");
+          ctx.font = "4px monospace"; ctx.textAlign = "center";
+          ctx.fillText(_vs ? "SPENT" : `${voodooPinsLeft}/${VOODOO_TOTAL_PINS}`, 0, 13);
+          ctx.textAlign = "left";
         } else if (heldForDisplay === "Haunted Mirror") {
           ctx.fillStyle = "#483020"; ctx.fillRect(-6,-9,12,17); // wood frame
           ctx.fillStyle = "#705040"; ctx.fillRect(-5,-8,10,15);
@@ -6168,41 +6194,87 @@
     // --- Van Threat Monitor UI ---
     // Returns board-local {x,y} (offset from bx,by) for a given answer token.
     // Single char = letter/digit; "YES"/"NO"/"GOODBYE" = special board zones.
+    // Board is BW=700. Arc geometry: large circle below board creates upward-curving arcs.
     function _ouijaTokenPos(token) {
-      const BW = 560, LW = 38, NW = 42;
-      const L1 = "ABCDEFGHIJKLM", L2 = "NOPQRSTUVWXYZ", NR = "1234567890";
       const t = (token || "").toUpperCase();
+      const L1 = "ABCDEFGHIJKLM", L2 = "NOPQRSTUVWXYZ", NR = "1234567890";
+      // Arc centers placed far below the board so letters curve gently upward.
+      const R1 = 760, CY1 = 800, AHALF = 0.28; // A-M arc
+      const R2 = 690, CY2 = 800;               // N-Z arc (tighter = lower on board)
       const i1 = L1.indexOf(t);
-      if (i1 >= 0) { const sx=(BW-13*LW)/2; return { x: sx+i1*LW+LW/2, y: 70+Math.sin((i1/12)*Math.PI)*-8 }; }
+      if (i1 >= 0) {
+        const a = -AHALF + (i1 / 12) * AHALF * 2;
+        return { x: 350 + R1 * Math.sin(a), y: CY1 - R1 * Math.cos(a) };
+      }
       const i2 = L2.indexOf(t);
-      if (i2 >= 0) { const sx=(BW-13*LW)/2; return { x: sx+i2*LW+LW/2, y: 102+Math.sin((i2/12)*Math.PI)*-8 }; }
+      if (i2 >= 0) {
+        const a = -AHALF + (i2 / 12) * AHALF * 2;
+        return { x: 350 + R2 * Math.sin(a), y: CY2 - R2 * Math.cos(a) };
+      }
       const iN = NR.indexOf(t);
-      if (iN >= 0) { const sx=(BW-10*NW)/2; return { x: sx+iN*NW+NW/2, y: 140 }; }
-      if (t === "YES")     return { x:  62, y: 183 };
-      if (t === "NO")      return { x: 498, y: 183 };
-      if (t === "GOODBYE") return { x: 280, y: 183 };
-      return { x: 280, y: 155 };
+      if (iN >= 0) {
+        const numW = 38, numCount = 10;
+        const sx = (700 - numCount * numW) / 2;
+        return { x: sx + iN * numW + numW / 2, y: 200 };
+      }
+      if (t === "YES")     return { x:  80, y:  50 };
+      if (t === "NO")      return { x: 620, y:  50 };
+      if (t === "GOODBYE") return { x: 350, y: 295 };
+      return { x: 350, y: 155 };
+    }
+
+    // Common American first names for ghost identity answer.
+    const OUIJA_NAMES = [
+      "JAMES","JOHN","ROBERT","MICHAEL","WILLIAM","DAVID","RICHARD","THOMAS",
+      "MARY","PATRICIA","JENNIFER","LINDA","BARBARA","SUSAN","JESSICA","SARAH",
+    ];
+
+    // Helper: find which room a world point (wx, wy) is inside.
+    function _roomAtPoint(wx, wy) {
+      return rooms.find(r => wx >= r.x && wy >= r.y && wx < r.x + r.w && wy < r.y + r.h) || null;
     }
 
     // Pool of 5 Ouija questions — each has a stable id and an answerFn that returns a token array.
     const OUIJA_Q_POOL = [
-      { id: 0, text: "Are you here with us?",
-        answerFn: () => ["YES"] },
-      { id: 1, text: "Where do you roam?",
+      { id: 0, text: "Where are you?",
         answerFn: () => {
-          const room = ghostFavRoom;
-          if (room && room.label) return room.label.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7).split('');
-          return ["NO"];
+          // Ghost's current room at time of asking — fall back to favorite room label.
+          const gRoom = _roomAtPoint(ghostX, ghostY) || ghostFavRoom;
+          if (gRoom && gRoom.label) {
+            const clean = gRoom.label.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+            if (clean.length > 0) return clean.split('');
+          }
+          return "HERE".split('');
+        }},
+      { id: 1, text: "How old are you?",
+        answerFn: () => {
+          // Pick a believable human age (seeded from ghost type so it's stable per round).
+          const seed = currentGhost ? currentGhost.name.charCodeAt(0) : 42;
+          const age = 18 + ((seed * 17 + 31) % 62); // 18–79
+          return String(age).split('');
         }},
       { id: 2, text: "What is your name?",
         answerFn: () => {
-          if (!currentGhost) return ["NO"];
-          return currentGhost.name.toUpperCase().replace(/[^A-Z]/g,'').slice(0,5).split('');
+          // Pick a common American name seeded by ghost type so it's stable per round.
+          const seed = currentGhost ? currentGhost.name.charCodeAt(1) || 0 : 0;
+          const name = OUIJA_NAMES[(seed * 3 + 7) % OUIJA_NAMES.length];
+          return name.split('');
         }},
-      { id: 3, text: "Do you want to hurt us?",
-        answerFn: () => ["YES"] },
-      { id: 4, text: "Will you leave us?",
-        answerFn: () => ["GOODBYE"] },
+      { id: 3, text: "Are you friendly?",
+        answerFn: () => {
+          // Friendly ghost types give YES; all others NO.
+          const friendlyTypes = ["Spirit", "Wraith", "Goryo", "Myling"];
+          const friendly = currentGhost && friendlyTypes.includes(currentGhost.name);
+          return [friendly ? "YES" : "NO"];
+        }},
+      { id: 4, text: "Are you here?",
+        answerFn: () => {
+          // YES if ghost and player are in the same room right now.
+          const pRoom = _roomAtPoint(player.x + 8, player.y + 8);
+          const gRoom = _roomAtPoint(ghostX, ghostY);
+          const sameRoom = pRoom && gRoom && pRoom === gRoom;
+          return [sameRoom ? "YES" : "NO"];
+        }},
     ];
 
     // Ask a question from the pool — starts the answer animation, tracks spend state.
@@ -6225,6 +6297,47 @@
       const pos = _ouijaTokenPos(seq[0]);
       ouijaTX = pos.x; ouijaTY = pos.y;
       ouijaSeqNextTime  = Date.now() + 950; // ms to dwell on each token
+    }
+
+    // ── Voodoo Doll — push one pin ────────────────────────────────────────
+    function _triggerVoodooPinEvent() {
+      if (voodooSpent || voodooCooldown > 0 || voodooPinsLeft <= 0) return;
+
+      voodooPinsLeft--;
+      voodooCooldown = 2.5; // 2.5s between pins (prevents spam)
+      const isHeartPin = voodooPinsLeft === 0; // last pin = heart pin
+
+      if (!currentGhost) return;
+
+      // Force an immediate EMF burst at the ghost's current position.
+      const hasEmf5 = currentGhost.evidence.includes("EMF Level 5");
+      const jitter  = isHeartPin ? 30 : 15;
+      const level   = isHeartPin ? 5 : (hasEmf5 && Math.random() < 0.5 ? 5 : 3 + Math.floor(Math.random() * 2));
+      emfSources.push({
+        x: ghostX + (Math.random() - 0.5) * jitter,
+        y: ghostY + (Math.random() - 0.5) * jitter,
+        level,
+        timer: isHeartPin ? 16 : 10,
+      });
+      if (emfSources.length > 6) emfSources.shift();
+
+      // Reset the event timer so the ghost fires again very soon.
+      ghostEventTimer = isHeartPin ? 0.3 : 1.0 + Math.random() * 1.5;
+
+      if (isHeartPin) {
+        // Heart pin: ghost teleports to the player's room (or right behind them).
+        const pRoom = _roomAtPoint(player.x + 8, player.y + 8);
+        if (pRoom) {
+          // Place ghost on a walkable spot in the same room, offset from player
+          ghostX = Math.min(Math.max(player.x + 40, pRoom.x + 10), pRoom.x + pRoom.w - 10);
+          ghostY = Math.min(Math.max(player.y + 40, pRoom.y + 10), pRoom.y + pRoom.h - 10);
+          ghostTargetX = ghostX;
+          ghostTargetY = ghostY;
+        }
+        // Additional D.O.T.S. disturb if evidence present
+        if (currentGhost.evidence.includes("D.O.T.S. Projector")) dotsDisturbTimer = 6;
+        voodooSpent = true;
+      }
     }
 
     function _breakOuijaBoard() {
@@ -6263,242 +6376,305 @@
 
     function drawOuijaBoard() {
       const W = canvas.width, H = canvas.height;
-      const BW = 560, BH = 360; // board popup dimensions
-      const bx = (W - BW) / 2, by = (H - BH) / 2 + 10; // centered, slightly below mid
+      const BW = 700, BH = 440; // board popup dimensions
+      const bx = (W - BW) / 2, by = (H - BH) / 2; // centered
 
-      // Dark semi-transparent world vignette — world stays visible behind
+      // Dark semi-transparent world vignette
       ctx.save();
-      ctx.fillStyle = "rgba(0,0,0,0.62)";
+      ctx.fillStyle = "rgba(0,0,0,0.68)";
       ctx.fillRect(0, 0, W, H);
       ctx.restore();
 
-      // ── Board body ────────────────────────────────────────────────────────
       ctx.save();
 
+      // ── Board body ────────────────────────────────────────────────────────
       // Drop shadow
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
-      ctx.fillRect(bx + 6, by + 8, BW, BH);
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.beginPath(); ctx.roundRect(bx + 8, by + 10, BW, BH, 12); ctx.fill();
 
-      // Board surface — dark walnut wood
-      const woodGrad = ctx.createLinearGradient(bx, by, bx, by + BH);
-      woodGrad.addColorStop(0,   "#2e1a08");
-      woodGrad.addColorStop(0.5, "#1e1005");
-      woodGrad.addColorStop(1,   "#2a1808");
+      // Board surface — aged mahogany gradient
+      const woodGrad = ctx.createLinearGradient(bx, by, bx + BW * 0.6, by + BH);
+      woodGrad.addColorStop(0,    "#3d1a0a");
+      woodGrad.addColorStop(0.3,  "#5c2710");
+      woodGrad.addColorStop(0.55, "#4a1f0c");
+      woodGrad.addColorStop(0.8,  "#3a1608");
+      woodGrad.addColorStop(1,    "#2e1005");
       ctx.fillStyle = woodGrad;
-      ctx.beginPath();
-      ctx.roundRect(bx, by, BW, BH, 10);
-      ctx.fill();
+      ctx.beginPath(); ctx.roundRect(bx, by, BW, BH, 12); ctx.fill();
 
-      // Subtle wood grain lines
-      ctx.strokeStyle = "rgba(255,200,120,0.05)";
-      ctx.lineWidth = 1;
-      for (let g = 0; g < BH; g += 18) {
+      // Wood grain — diagonal streaks
+      ctx.save();
+      ctx.beginPath(); ctx.roundRect(bx, by, BW, BH, 12); ctx.clip();
+      ctx.strokeStyle = "rgba(255,160,80,0.04)"; ctx.lineWidth = 1.5;
+      for (let g = -BH; g < BW + BH; g += 22) {
         ctx.beginPath();
-        ctx.moveTo(bx, by + g + Math.sin(g * 0.3) * 3);
-        ctx.lineTo(bx + BW, by + g + Math.sin(g * 0.3 + 1.2) * 3);
+        ctx.moveTo(bx + g, by);
+        ctx.lineTo(bx + g + BH * 0.6, by + BH);
         ctx.stroke();
       }
+      ctx.restore();
 
-      // Board border — carved double-line frame
-      ctx.strokeStyle = "#8a6020"; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.roundRect(bx + 4, by + 4, BW - 8, BH - 8, 8); ctx.stroke();
-      ctx.strokeStyle = "#c8a040"; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.roundRect(bx + 7, by + 7, BW - 14, BH - 14, 6); ctx.stroke();
-
-      // ── "OUIJA" title ─────────────────────────────────────────────────────
-      ctx.fillStyle = "#d4a840";
-      ctx.font = "bold 28px serif";
-      ctx.textAlign = "center";
-      ctx.fillText("OUIJA", W / 2, by + 42);
-      // Decorative small dots either side of title
-      ctx.fillStyle = "#a07828";
-      ctx.beginPath(); ctx.arc(W/2 - 78, by + 36, 3, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(W/2 + 78, by + 36, 3, 0, Math.PI*2); ctx.fill();
-
-      // Sun (top-left) and Moon (top-right) decorative symbols
-      ctx.font = "18px serif"; ctx.fillStyle = "#c8a030";
-      ctx.textAlign = "left";  ctx.fillText("☀", bx + 18, by + 44);
-      ctx.textAlign = "right"; ctx.fillText("☽", bx + BW - 18, by + 44);
+      // Outer ornate border — triple line
+      ctx.strokeStyle = "#7a4010"; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.roundRect(bx + 3,  by + 3,  BW - 6,  BH - 6,  10); ctx.stroke();
+      ctx.strokeStyle = "#c88030"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(bx + 8,  by + 8,  BW - 16, BH - 16, 8);  ctx.stroke();
+      ctx.strokeStyle = "#5a2a08"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(bx + 11, by + 11, BW - 22, BH - 22, 6);  ctx.stroke();
 
       // ── Animation update ──────────────────────────────────────────────────
       const _now = Date.now();
-      // Smooth lerp planchette toward its target (board-local coords)
-      ouijaPX += (ouijaTX - ouijaPX) * 0.11;
-      ouijaPY += (ouijaTY - ouijaPY) * 0.11;
-      // Advance sequence when dwell time expires
+      ouijaPX += (ouijaTX - ouijaPX) * 0.08;
+      ouijaPY += (ouijaTY - ouijaPY) * 0.08;
       if (ouijaSeqIdx >= 0 && _now >= ouijaSeqNextTime) {
         ouijaSeqIdx++;
         if (ouijaSeqIdx >= ouijaSeq.length) {
-          // Sequence complete — return to center, optionally break
           ouijaSeqIdx = -1;
-          ouijaTX = 280; ouijaTY = 155;
+          ouijaTX = 350; ouijaTY = 155;
           if (ouijaPendingBreak) _breakOuijaBoard();
         } else {
           const _tp = _ouijaTokenPos(ouijaSeq[ouijaSeqIdx]);
           ouijaTX = _tp.x; ouijaTY = _tp.y;
-          ouijaSeqNextTime = _now + 950;
+          ouijaSeqNextTime = _now + 1100;
         }
       }
-      // Current active token for highlighting letters/words on the board
       const _activeTok = (ouijaSeqIdx >= 0 && ouijaSeq.length > 0) ? ouijaSeq[ouijaSeqIdx] : null;
 
-      // ── Alphabet rows (two rows: A-M, N-Z) ───────────────────────────────
-      const letters1 = "ABCDEFGHIJKLM".split("");
-      const letters2 = "NOPQRSTUVWXYZ".split("");
-      const letterW  = 38;
-      const row1X = bx + (BW - letters1.length * letterW) / 2;
-      const row2X = bx + (BW - letters2.length * letterW) / 2;
-      const row1Y = by + 70, row2Y = by + 102;
+      // ── YES (upper-left) and NO (upper-right) ─────────────────────────────
+      const yesActive = _activeTok === "YES", noActive = _activeTok === "NO";
+      ctx.font = "bold italic 26px serif"; ctx.textAlign = "center";
+      if (yesActive) {
+        const yg = ctx.createRadialGradient(bx+80, by+50, 0, bx+80, by+50, 40);
+        yg.addColorStop(0, "rgba(255,230,60,0.35)"); yg.addColorStop(1, "rgba(255,230,60,0)");
+        ctx.fillStyle = yg; ctx.fillRect(bx+40, by+28, 80, 36);
+      }
+      ctx.fillStyle = yesActive ? "#fff470" : "#d4a840";
+      ctx.fillText("YES", bx + 80, by + 55);
+      if (noActive) {
+        const ng = ctx.createRadialGradient(bx+BW-80, by+50, 0, bx+BW-80, by+50, 40);
+        ng.addColorStop(0, "rgba(255,230,60,0.35)"); ng.addColorStop(1, "rgba(255,230,60,0)");
+        ctx.fillStyle = ng; ctx.fillRect(bx+BW-120, by+28, 80, 36);
+      }
+      ctx.fillStyle = noActive ? "#fff470" : "#d4a840";
+      ctx.fillText("NO", bx + BW - 80, by + 55);
 
-      function drawLetterRow(letters, startX, rowY) {
+      // ── "OUIJA" title (center top) ────────────────────────────────────────
+      if (ouijaSeqIdx >= 0) {
+        const tg = ctx.createRadialGradient(W/2, by+48, 0, W/2, by+48, 80);
+        tg.addColorStop(0, "rgba(200,140,30,0.22)"); tg.addColorStop(1, "rgba(200,140,30,0)");
+        ctx.fillStyle = tg; ctx.fillRect(W/2-80, by+20, 160, 56);
+      }
+      ctx.font = "bold 34px serif"; ctx.textAlign = "center";
+      ctx.fillStyle = "#e8c050";
+      ctx.shadowColor = "rgba(200,140,20,0.6)"; ctx.shadowBlur = 8;
+      ctx.fillText("OUIJA", W / 2, by + 58);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#a07828";
+      ctx.beginPath(); ctx.arc(W/2 - 96, by + 51, 2.5, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(W/2 + 96, by + 51, 2.5, 0, Math.PI*2); ctx.fill();
+      ctx.font = "20px serif"; ctx.fillStyle = "#b87820";
+      ctx.textAlign = "left";  ctx.fillText("✦", bx + 18, by + 38);
+      ctx.textAlign = "right"; ctx.fillText("✦", bx + BW - 18, by + 38);
+
+      // Thin divider under header
+      ctx.strokeStyle = "rgba(180,120,30,0.4)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx + 30, by + 70); ctx.lineTo(bx + BW - 30, by + 70); ctx.stroke();
+
+      // ── Arc letter rows ───────────────────────────────────────────────────
+      const R1 = 760, R2 = 690, ARC_CY = 800, AHALF = 0.28;
+      const L1 = "ABCDEFGHIJKLM".split("");
+      const L2 = "NOPQRSTUVWXYZ".split("");
+
+      function _drawArcLetters(letters, R) {
         letters.forEach((ch, i) => {
-          const lx = startX + i * letterW + letterW / 2;
-          const arcOff = Math.sin((i / (letters.length - 1)) * Math.PI) * -8;
+          const a = -AHALF + (i / (letters.length - 1)) * AHALF * 2;
+          const lx = bx + 350 + R * Math.sin(a);
+          const ly = by + ARC_CY - R * Math.cos(a);
           const isActive = _activeTok === ch;
+          ctx.save();
+          ctx.translate(lx, ly);
+          ctx.rotate(a);
           if (isActive) {
-            // Glow highlight behind active letter
-            ctx.fillStyle = "rgba(255,230,60,0.28)";
-            ctx.fillRect(lx - 13, rowY + arcOff - 14, 26, 20);
+            ctx.fillStyle = "rgba(255,230,60,0.32)";
+            ctx.fillRect(-11, -17, 22, 22);
           }
           ctx.fillStyle = isActive ? "#fff470" : "#e8d090";
-          ctx.font = isActive ? "bold 15px serif" : "bold 14px serif";
-          ctx.textAlign = "center";
-          ctx.fillText(ch, lx, rowY + arcOff);
+          ctx.font = isActive ? "bold 16px serif" : "bold 14px serif";
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText(ch, 0, 0);
+          ctx.restore();
         });
       }
-      drawLetterRow(letters1, row1X, row1Y);
-      drawLetterRow(letters2, row2X, row2Y);
+      _drawArcLetters(L1, R1);
+      _drawArcLetters(L2, R2);
 
       // ── Numbers row ───────────────────────────────────────────────────────
-      const numbers = "1234567890".split("");
-      const numW = 42;
-      const numStartX = bx + (BW - numbers.length * numW) / 2;
-      const numY = by + 140;
-      numbers.forEach((n, i) => {
+      const nums = "1234567890".split("");
+      const numW = 38, numStartX = bx + (BW - nums.length * numW) / 2;
+      const numY = by + 200;
+      nums.forEach((n, i) => {
         const isActive = _activeTok === n;
+        const nx = numStartX + i * numW + numW / 2;
         if (isActive) {
           ctx.fillStyle = "rgba(255,230,60,0.28)";
-          ctx.fillRect(numStartX + i * numW + 3, numY - 14, numW - 6, 18);
+          ctx.fillRect(nx - 13, numY - 14, 26, 18);
         }
-        ctx.fillStyle = isActive ? "#fff470" : "#c8b870";
-        ctx.font = "13px serif"; ctx.textAlign = "center";
-        ctx.fillText(n, numStartX + i * numW + numW / 2, numY);
+        ctx.fillStyle = isActive ? "#fff470" : "#c8b060";
+        ctx.font = isActive ? "bold 14px serif" : "13px serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        ctx.fillText(n, nx, numY);
       });
 
-      // ── YES / NO ──────────────────────────────────────────────────────────
-      const yesActive = _activeTok === "YES", noActive = _activeTok === "NO";
-      if (yesActive) { ctx.fillStyle="rgba(255,230,60,0.28)"; ctx.fillRect(bx+28, by+170, 68, 24); }
-      if (noActive)  { ctx.fillStyle="rgba(255,230,60,0.28)"; ctx.fillRect(bx+BW-96, by+170, 60, 24); }
-      ctx.font = "bold 20px serif";
-      ctx.textAlign = "left";  ctx.fillStyle = yesActive ? "#fff470" : "#d4a840"; ctx.fillText("YES", bx + 40, by + 188);
-      ctx.textAlign = "right"; ctx.fillStyle = noActive  ? "#fff470" : "#d4a840"; ctx.fillText("NO",  bx + BW - 40, by + 188);
-
-      // ── GOODBYE ───────────────────────────────────────────────────────────
+      // ── GOODBYE (bottom center) ───────────────────────────────────────────
       const gbActive = _activeTok === "GOODBYE";
-      if (gbActive) { ctx.fillStyle="rgba(255,230,60,0.22)"; ctx.fillRect(W/2-50, by+172, 100, 22); }
-      ctx.font = "italic 15px serif"; ctx.textAlign = "center";
-      ctx.fillStyle = gbActive ? "#fff470" : "#9a7828";
-      ctx.fillText("GOODBYE", W / 2, by + 188);
+      if (gbActive) {
+        const gg = ctx.createRadialGradient(W/2, by+295, 0, W/2, by+295, 55);
+        gg.addColorStop(0, "rgba(255,230,60,0.32)"); gg.addColorStop(1, "rgba(255,230,60,0)");
+        ctx.fillStyle = gg; ctx.fillRect(W/2-55, by+273, 110, 32);
+      }
+      ctx.font = "bold italic 20px serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = gbActive ? "#fff470" : "#b88828";
+      ctx.fillText("GOOD BYE", W / 2, by + 300);
 
-      // Decorative separator line under main content
-      ctx.strokeStyle = "#5a3e10"; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(bx + 30, by + 200); ctx.lineTo(bx + BW - 30, by + 200); ctx.stroke();
+      // Decorative separator
+      ctx.strokeStyle = "rgba(150,90,20,0.5)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx + 40, by + 312); ctx.lineTo(bx + BW - 40, by + 312); ctx.stroke();
 
-      // ── Question zone (below separator) ──────────────────────────────────
-      // Answering: show current question + answer text; menu is hidden.
-      // Idle: show numbered question menu — rebuild _ouijaMenuRects for click detection.
-      const _menuTop = by + 206;
+      // ── Question zone ─────────────────────────────────────────────────────
+      const _menuTop = by + 318;
       if (ouijaSeqIdx >= 0) {
-        // Board is speaking — display question being answered + answer text
         if (ouijaCurrentQ) {
-          ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(bx + 20, _menuTop, BW - 40, 18);
-          ctx.fillStyle = "#c8a060"; ctx.font = "italic 11px serif"; ctx.textAlign = "center";
-          ctx.fillText(`"${ouijaCurrentQ}"`, W / 2, _menuTop + 13);
+          ctx.fillStyle = "#c8a060"; ctx.font = "italic 12px serif"; ctx.textAlign = "center";
+          ctx.fillText(`"${ouijaCurrentQ}"`, W / 2, _menuTop + 14);
         }
         if (ouijaLastAnswer) {
-          ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(bx + BW/2 - 80, _menuTop + 22, 160, 14);
-          ctx.fillStyle = "#d4a040"; ctx.font = "bold 11px monospace"; ctx.textAlign = "center";
-          ctx.fillText(ouijaLastAnswer, W / 2, _menuTop + 33);
+          ctx.fillStyle = "#d4a040"; ctx.font = "bold 12px monospace"; ctx.textAlign = "center";
+          ctx.fillText(ouijaLastAnswer, W / 2, _menuTop + 30);
         }
       } else {
-        // Idle — show question menu
         _ouijaMenuRects = [];
         const _avail = OUIJA_Q_POOL.filter(q => !ouijaAskedQIds.has(q.id));
-        const _rowH = 17, _padX = 22;
+        const _rowH = 19, _padX = 28;
         _avail.forEach((q, i) => {
           const ry = _menuTop + i * _rowH;
-          const isHovered = false; // keyboard-only hover not needed; click handles it
-          // Row background
-          ctx.fillStyle = "rgba(80,45,10,0.5)";
+          ctx.fillStyle = "rgba(60,30,8,0.55)";
           ctx.fillRect(bx + _padX, ry, BW - _padX * 2, _rowH - 2);
-          // Number badge
-          ctx.fillStyle = "#e8c060"; ctx.font = "bold 11px monospace"; ctx.textAlign = "left";
-          ctx.fillText(`${i + 1}`, bx + _padX + 5, ry + 12);
-          // Question text
+          ctx.fillStyle = "#e8c060"; ctx.font = "bold 11px monospace"; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+          ctx.fillText(`${i + 1}`, bx + _padX + 6, ry + 13);
           ctx.fillStyle = "#d4b870"; ctx.font = "11px serif";
-          ctx.fillText(q.text, bx + _padX + 20, ry + 12);
-          // Store rect for click detection (screen coords)
+          ctx.fillText(q.text, bx + _padX + 22, ry + 13);
           _ouijaMenuRects.push({ id: q.id, rect: { x: bx + _padX, y: ry, w: BW - _padX * 2, h: _rowH - 2 } });
         });
         if (_avail.length === 0) {
-          ctx.fillStyle = "#806040"; ctx.font = "italic 11px serif"; ctx.textAlign = "center";
+          ctx.fillStyle = "#806040"; ctx.font = "italic 12px serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
           ctx.fillText("The board is spent.", W / 2, _menuTop + 14);
         }
       }
 
       // ── Planchette ────────────────────────────────────────────────────────
-      // Position: board-local with optional idle drift when not animating
-      const _pt = _now / 900;
-      const px = bx + ouijaPX + (ouijaSeqIdx === -1 ? Math.sin(_pt * 0.7) * 9 : 0);
-      const py = by + ouijaPY + (ouijaSeqIdx === -1 ? Math.cos(_pt * 0.5) * 5 : 0);
-      const pr = 22;
+      const _pt = _now / 1100;
+      const px = bx + ouijaPX + (ouijaSeqIdx === -1 ? Math.sin(_pt * 0.6) * 7 : 0);
+      const py = by + ouijaPY + (ouijaSeqIdx === -1 ? Math.cos(_pt * 0.4) * 4 : 0);
+      const PW = 26, PH = 34; // half-width, half-height
 
-      // Planchette shadow
-      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      // Shadow
+      ctx.fillStyle = "rgba(0,0,0,0.45)";
       ctx.beginPath();
-      ctx.ellipse(px + 3, py + 4, pr * 0.9, pr * 0.65, 0, 0, Math.PI * 2);
+      ctx.ellipse(px + 4, py + 5, PW * 0.85, PH * 0.55, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Planchette body — warm ivory; faint amber glow when actively answering
-      const pGrad = ctx.createRadialGradient(px - 4, py - 4, 2, px, py, pr);
-      pGrad.addColorStop(0,   ouijaSeqIdx >= 0 ? "#fff8d0" : "#f0e8c8");
-      pGrad.addColorStop(0.6, "#c8b880");
-      pGrad.addColorStop(1,   "#a09050");
-      ctx.fillStyle = pGrad;
+      // Body gradient — warm reddish-brown wood, amber when active
+      const pBodyGrad = ctx.createRadialGradient(px - PW * 0.35, py - PH * 0.3, 2, px, py, PW * 1.4);
+      if (ouijaSeqIdx >= 0) {
+        pBodyGrad.addColorStop(0,   "#ffe8a0");
+        pBodyGrad.addColorStop(0.5, "#c87820");
+        pBodyGrad.addColorStop(1,   "#6a3808");
+      } else {
+        pBodyGrad.addColorStop(0,   "#d4a060");
+        pBodyGrad.addColorStop(0.5, "#8a4818");
+        pBodyGrad.addColorStop(1,   "#4a2008");
+      }
+      ctx.fillStyle = pBodyGrad;
+
+      // Teardrop path: wide at top, tapered point at bottom
       ctx.beginPath();
-      ctx.moveTo(px, py - pr);
-      ctx.bezierCurveTo(px + pr * 1.1, py - pr, px + pr, py + pr * 0.4, px, py + pr);
-      ctx.bezierCurveTo(px - pr, py + pr * 0.4, px - pr * 1.1, py - pr, px, py - pr);
+      ctx.moveTo(px, py + PH);
+      ctx.bezierCurveTo(px - PW * 0.55, py + PH * 0.3,  px - PW, py - PH * 0.15, px - PW * 0.7, py - PH * 0.7);
+      ctx.bezierCurveTo(px - PW * 0.4,  py - PH,        px + PW * 0.4, py - PH,  px + PW * 0.7, py - PH * 0.7);
+      ctx.bezierCurveTo(px + PW,        py - PH * 0.15, px + PW * 0.55, py + PH * 0.3, px, py + PH);
       ctx.closePath();
       ctx.fill();
 
-      // Planchette border — brighter when moving
-      ctx.strokeStyle = ouijaSeqIdx >= 0 ? "#e0b040" : "#806030"; ctx.lineWidth = 1.5;
+      // Body stroke
+      ctx.strokeStyle = ouijaSeqIdx >= 0 ? "#ffcc40" : "#a86020";
+      ctx.lineWidth = ouijaSeqIdx >= 0 ? 1.8 : 1.2;
       ctx.beginPath();
-      ctx.moveTo(px, py - pr);
-      ctx.bezierCurveTo(px + pr * 1.1, py - pr, px + pr, py + pr * 0.4, px, py + pr);
-      ctx.bezierCurveTo(px - pr, py + pr * 0.4, px - pr * 1.1, py - pr, px, py - pr);
+      ctx.moveTo(px, py + PH);
+      ctx.bezierCurveTo(px - PW * 0.55, py + PH * 0.3,  px - PW, py - PH * 0.15, px - PW * 0.7, py - PH * 0.7);
+      ctx.bezierCurveTo(px - PW * 0.4,  py - PH,        px + PW * 0.4, py - PH,  px + PW * 0.7, py - PH * 0.7);
+      ctx.bezierCurveTo(px + PW,        py - PH * 0.15, px + PW * 0.55, py + PH * 0.3, px, py + PH);
       ctx.closePath();
       ctx.stroke();
 
-      // Viewing hole
-      ctx.fillStyle = "rgba(10,5,2,0.85)";
-      ctx.beginPath(); ctx.arc(px, py - 4, 6, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = ouijaSeqIdx >= 0 ? "#ffdd60" : "#c0a050"; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(px, py - 4, 6, 0, Math.PI * 2); ctx.stroke();
+      // Wood grain lines on body
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(px, py + PH);
+      ctx.bezierCurveTo(px - PW * 0.55, py + PH * 0.3,  px - PW, py - PH * 0.15, px - PW * 0.7, py - PH * 0.7);
+      ctx.bezierCurveTo(px - PW * 0.4,  py - PH,        px + PW * 0.4, py - PH,  px + PW * 0.7, py - PH * 0.7);
+      ctx.bezierCurveTo(px + PW,        py - PH * 0.15, px + PW * 0.55, py + PH * 0.3, px, py + PH);
+      ctx.closePath();
+      ctx.clip();
+      ctx.strokeStyle = "rgba(255,180,80,0.08)"; ctx.lineWidth = 1;
+      for (let g = -PH; g < PH; g += 8) {
+        ctx.beginPath(); ctx.moveTo(px - PW - 5, py + g); ctx.lineTo(px + PW + 5, py + g + 3); ctx.stroke();
+      }
+      ctx.restore();
+
+      // Three felt feet (small filled circles)
+      const feetPos = [
+        { fx: px - PW * 0.45, fy: py - PH * 0.5 },
+        { fx: px + PW * 0.45, fy: py - PH * 0.5 },
+        { fx: px,             fy: py + PH * 0.55 },
+      ];
+      feetPos.forEach(f => {
+        ctx.fillStyle = "rgba(20,10,5,0.7)";
+        ctx.beginPath(); ctx.ellipse(f.fx, f.fy, 4, 3, 0, 0, Math.PI*2); ctx.fill();
+      });
+
+      // Viewing hole — circular glass lens near upper center
+      const hx = px, hy = py - PH * 0.2;
+      const holeR = 9;
+      ctx.fillStyle = "rgba(5,3,2,0.9)";
+      ctx.beginPath(); ctx.arc(hx, hy, holeR, 0, Math.PI * 2); ctx.fill();
+      // Active letter inside hole
+      if (_activeTok && _activeTok.length <= 2) {
+        ctx.fillStyle = ouijaSeqIdx >= 0 ? "#ffee80" : "#c8a040";
+        ctx.font = `bold ${_activeTok.length === 1 ? 11 : 8}px serif`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        if (ouijaSeqIdx >= 0) { ctx.shadowColor = "rgba(255,220,50,0.9)"; ctx.shadowBlur = 5; }
+        ctx.fillText(_activeTok, hx, hy);
+        ctx.shadowBlur = 0;
+      }
+      // Hole rim
+      ctx.strokeStyle = ouijaSeqIdx >= 0 ? "#ffcc40" : "#806020"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(hx, hy, holeR, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = "rgba(255,200,100,0.3)"; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.arc(hx - 2, hy - 2, holeR - 2, 0, Math.PI * 2); ctx.stroke();
 
       // ── Footer ────────────────────────────────────────────────────────────
-      ctx.fillStyle = "rgba(100,60,10,0.75)";
-      ctx.fillRect(bx, by + BH - 26, BW, 26);
-      ctx.beginPath(); ctx.roundRect(bx, by + BH - 26, BW, 26, [0, 0, 10, 10]); ctx.fill();
-      ctx.fillStyle = "#c8a050"; ctx.font = "11px monospace"; ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(40,18,5,0.85)";
+      ctx.beginPath(); ctx.roundRect(bx, by + BH - 24, BW, 24, [0, 0, 12, 12]); ctx.fill();
+      ctx.fillStyle = "#b89040"; ctx.font = "11px monospace"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
       const _used = ouijaQuestionsAsked, _lim = 3;
-      const _footerText = ouijaSeqIdx >= 0
-        ? "... the board speaks ..."
-        : `[1-5] choose question   [R] put down   ${_used}/${_lim} asked`;
-      ctx.fillText(_footerText, W / 2, by + BH - 9);
+      ctx.fillText(
+        ouijaSeqIdx >= 0
+          ? "... the board speaks ..."
+          : `[1–5] choose question   [R] put down   ${_used}/${_lim} asked`,
+        W / 2, by + BH - 7
+      );
 
-      ctx.textAlign = "left";
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
       ctx.restore();
     }
 
