@@ -218,6 +218,12 @@
     let _titleNavRight    = null;   // right arrow rect
     let _truckTab         = "shop"; // active truck monitor subpage: "shop"|"truck"|"character"
     let _truckNavRects    = [];     // [{tab, x, y, w, h}], set each frame by _drawPageShop
+    let _shopSelectedItem = 0;       // index into SHOP_CATALOG
+    let _shopScrollOffset = 0;       // first visible row index
+    let _shopItemRects    = [];      // [{idx, x, y, w, h}], set each frame
+    let _truckSelItem     = 0;        // selected index in TRUCK_CATALOG
+    let _truckListScroll  = 0;        // scroll offset for truck item list
+    let _truckItemRects   = [];       // [{idx, x, y, w, h}], set each frame
     let gameRunning  = false;
     let roundOver    = false;
     let guessCorrect = false;
@@ -261,6 +267,7 @@
     let ghostAppearTimer = 0;       // > 0: show ghost in gray translucent form in world
     let ghostHuntFlash   = 0;       // > 0: red hunt-flash screen overlay fading from 1.5→0
     let playerSanity     = 100;     // 0–100; head pin reduces by 25
+    let playerMoney      = 0;        // earned from completed investigations; spent in shop
     let _voodooPinRects  = [];      // rebuilt each frame for click detection
     // ── Music Box state ───────────────────────────────────────────────────
     const MUSIC_BOX_HUNT_DELAY = 1.5; // seconds until hunt triggers after activation
@@ -5536,6 +5543,17 @@
           return;
         }
 
+        if (menuPhase === "corkboard" && _corkboardPage === 1 && _truckTab === "shop") {
+          const vis = Math.floor((canvas.height * 0.74) / 26); // approx VISIBLE rows
+          _shopScrollOffset = Math.max(0, Math.min(SHOP_CATALOG.length - vis, _shopScrollOffset + dir));
+          return;
+        }
+        if (menuPhase === "corkboard" && _corkboardPage === 1 && _truckTab === "truck") {
+          const vis = Math.floor((canvas.height * 0.74) / 26);
+          _truckListScroll = Math.max(0, Math.min(TRUCK_CATALOG.length - vis, _truckListScroll + dir));
+          return;
+        }
+
         if (journalOpen && journalTab === 2) {
           // Scroll the keybind list on the Options tab
           journalKeybindScrollY = Math.max(0, journalKeybindScrollY + dir * 30);
@@ -5583,6 +5601,16 @@
         if (_corkboardPage === 1) {
           for (const tn of _truckNavRects) {
             if (mx >= tn.x && mx <= tn.x+tn.w && my >= tn.y && my <= tn.y+tn.h) { _truckTab = tn.tab; return; }
+          }
+          if (_truckTab === "shop") {
+            for (const sr of _shopItemRects) {
+              if (mx >= sr.x && mx <= sr.x+sr.w && my >= sr.y && my <= sr.y+sr.h) { _shopSelectedItem = sr.idx; return; }
+            }
+          }
+          if (_truckTab === "truck") {
+            for (const tr of _truckItemRects) {
+              if (mx >= tr.x && mx <= tr.x+tr.w && my >= tr.y && my <= tr.y+tr.h) { _truckSelItem = tr.idx; return; }
+            }
           }
         }
         // Begin investigation button (page 2)
@@ -6937,193 +6965,614 @@
       { name: "Crucifix",       tag: "CRUX",      status: "LOCKED",   tier: 3 },
     ];
 
-    function _drawPageShop(bx, by, bw, bh) {
-      // ── Truck loadout monitor ──────────────────────────────────────────────
-      const MX = bx + 28, MY = by + 20, MW = bw - 56, MH = bh - 36;
+    // Truck loadout catalog — items available to pack for a round
+    // role: what the item does in the field; hint: what to look for when using it
+    const TRUCK_CATALOG = [
+      { name: "Flashlight",         role: "Illumination",  hint: "Keep it on at all times. Sanity drops faster in the dark." },
+      { name: "UV Flashlight",      role: "UV Evidence",   hint: "Sweep doorways and floors for fingerprints and ghost trails." },
+      { name: "EMF Reader",         role: "EMF Evidence",  hint: "Walk the favourite room slowly. Watch for a level 5 spike." },
+      { name: "Spirit Box",         role: "Spirit Box Ev.",hint: "Speak aloud near the ghost. Ask: 'Are you here?' or 'Show yourself'." },
+      { name: "Thermometer",        role: "Freezing Ev.",  hint: "Check multiple rooms. A reading near 0°C confirms freezing temps." },
+      { name: "Ghost Book",         role: "Ghost Writing", hint: "Leave it open on the floor in the favourite room and wait." },
+      { name: "D.O.T.S. Projector", role: "D.O.T.S. Ev.",  hint: "Point it at a wall and watch for a crawling silhouette." },
+      { name: "Sound Recorder",     role: "Audio Capture", hint: "Leave it in a room and check results from the van." },
+      { name: "Video Camera",       role: "Surveillance",  hint: "Mount on a tripod to watch a room remotely from the van." },
+      { name: "Tripod",             role: "Camera Mount",  hint: "Place before setting down the video camera." },
+      { name: "Sanity Meds",        role: "Sanity Restore",hint: "Use early — do not wait until you are already in danger." },
+      { name: "Lighter",            role: "Ignition",      hint: "Required to light candles or incense sticks." },
+      { name: "Incense",            role: "Ghost Repel",   hint: "Light near a roaming ghost to slow or deter it briefly." },
+      { name: "Crucifix",           role: "Hunt Block",    hint: "Place in the favourite room before the safe timer expires." },
+      { name: "Photo Camera",       role: "Photo Evidence",hint: "Photograph the ghost, interactions, and anomalies for bonus XP." },
+      { name: "Salt",               role: "Ghost Tracking",hint: "Pour in doorways. UV will reveal footprints after a pass." },
+      { name: "Sound Sensor",       role: "Remote Audio",  hint: "Leave in a quiet room to detect ghost movement remotely." },
+      { name: "Motion Sensor",      role: "Ghost Tracking",hint: "Cover doorways or corridors between you and the ghost." },
+      { name: "Head Gear",          role: "Van Feed",      hint: "Wear during the investigation for a live van camera feed." },
+    ];
 
-      // Outer bezel
-      ctx.fillStyle = "#0e0e10";
-      ctx.fillRect(MX - 10, MY - 10, MW + 20, MH + 20);
-      ctx.strokeStyle = "#2a2a30"; ctx.lineWidth = 2;
-      ctx.strokeRect(MX - 10 + 0.5, MY - 10 + 0.5, MW + 19, MH + 19);
-      ctx.strokeStyle = "#181820"; ctx.lineWidth = 1;
-      ctx.strokeRect(MX - 4 + 0.5, MY - 4 + 0.5, MW + 7, MH + 7);
+    // Shop catalog — all browseable equipment items (non-cursed)
+    // Add more entries here as items are implemented.
+    const SHOP_CATALOG = [
+      { name: "Flashlight",        cat: "starter",  desc: "Standard-issue torch. Illuminates dark rooms and is required for any investigation. Upgrades could extend range or battery life." },
+      { name: "UV Flashlight",     cat: "starter",  desc: "Reveals UV evidence: fingerprints, footsteps, and spectral residue. Upgrades could widen the cone or increase reveal distance." },
+      { name: "EMF Reader",        cat: "starter",  desc: "Detects electromagnetic fields. Reads levels 1–5; level 5 is a ghost evidence type. Upgrades could add a signal logger or wider range." },
+      { name: "Spirit Box",        cat: "starter",  desc: "Scans radio frequencies for ghost responses. Works in the dark or when the ghost is nearby. Upgrades could add directional audio or response clarity." },
+      { name: "Thermometer",       cat: "starter",  desc: "Measures room temperature. Freezing temps near 0°C are a confirmed evidence type. Upgrades could add data logging or multi-room scanning." },
+      { name: "Ghost Book",        cat: "starter",  desc: "Left on the floor for a ghost to write in. Ghost Writing is a key evidence type. Upgrades could add UV-reactive ink or faster activation." },
+      { name: "D.O.T.S. Projector",cat: "starter",  desc: "Projects a dot grid onto walls. Some ghosts visibly pass through it. Upgrades could add motion detection or wider projection area." },
+      { name: "Sound Recorder",    cat: "starter",  desc: "Captures audio anomalies in a room. Can pick up ghost sounds humans cannot hear. Upgrades could add real-time waveform display." },
+      { name: "Video Camera",      cat: "optional", desc: "Night-vision camera for remote monitoring. Mount on a tripod to watch a room from the van. Upgrades could add motion alerts or clearer resolution." },
+      { name: "Tripod",            cat: "optional", desc: "Camera stand. Holds a video camera steady for hands-free room surveillance. Upgrades could add rotation or a wider viewing angle." },
+      { name: "Sanity Meds",       cat: "optional", desc: "Restores sanity when consumed. Helps delay ghost aggression and hunts. Upgrades could increase restoration amount or add passive sanity regeneration." },
+      { name: "Lighter",           cat: "optional", desc: "Ignites candles and incense. Must be held to light items. Upgrades could add a wind shield or extended flame duration." },
+      { name: "Incense",           cat: "optional", desc: "Burns to temporarily repel a hunting ghost. Does not stop hunts outright. Upgrades could increase burn duration or repel radius." },
+      { name: "Crucifix",          cat: "optional", desc: "Placed on the floor to block ghost hunts within its radius. Single use. Upgrades could add a second charge or wider protection radius." },
+      { name: "Photo Camera",      cat: "optional", desc: "Photographs ghost activity for bonus XP. Upgrades could add a night-vision mode or faster shutter speed for clearer ghost shots." },
+      { name: "Salt",              cat: "optional", desc: "Pour on the floor. A ghost stepping through it leaves footprints visible under UV. Upgrades could add more uses or a wider pour area." },
+      { name: "Sound Sensor",      cat: "optional", desc: "Remote audio detector. Alerts you when a ghost moves or interacts nearby. Upgrades could add range, sensitivity, or multi-room support." },
+      { name: "Motion Sensor",     cat: "optional", desc: "Triggers when an entity passes its beam. Useful for watching doors and corridors. Upgrades could add a timer log or silent alert mode." },
+      { name: "Head Gear",         cat: "optional", desc: "Head-mounted camera that streams to the van monitor. Upgrades could add night vision, a microphone feed, or a heads-up EMF readout." },
+    ];
 
-      // Screen fill + scan lines + phosphor glow
-      const screenGrad = ctx.createLinearGradient(MX, MY, MX, MY + MH);
-      screenGrad.addColorStop(0, "#060d08"); screenGrad.addColorStop(0.5, "#080f0a"); screenGrad.addColorStop(1, "#040804");
-      ctx.fillStyle = screenGrad; ctx.fillRect(MX, MY, MW, MH);
+    // Draws one shop item icon centered at (icx, icy) using the same primitives
+    // as the pegboard slot art. Scale 1.0 = full pegboard size (~70x95px).
+    function _drawShopItemIcon(name, icx, icy, sc) {
       ctx.save();
-      ctx.beginPath(); ctx.rect(MX, MY, MW, MH); ctx.clip();
-      ctx.strokeStyle = "rgba(0,255,80,0.022)"; ctx.lineWidth = 1;
-      for (let sl = MY; sl < MY + MH; sl += 3) { ctx.beginPath(); ctx.moveTo(MX, sl); ctx.lineTo(MX + MW, sl); ctx.stroke(); }
-      const screenGlow = ctx.createRadialGradient(MX+MW/2, MY+MH/2, MW*0.1, MX+MW/2, MY+MH/2, MW*0.7);
-      screenGlow.addColorStop(0, "rgba(0,255,80,0.05)"); screenGlow.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = screenGlow; ctx.fillRect(MX, MY, MW, MH);
+      ctx.translate(icx, icy);
+      ctx.scale(sc, sc);
+      // Pegboard items draw in the region ex+56..ex+130, ey+10..ey+110
+      // Center of that region is roughly ex+93, ey+60 — translate so it maps to (0,0)
+      const ex = -93, ey = -60;
+      switch (name) {
+        case "Flashlight":
+          ctx.fillStyle = "#c8a820"; ctx.fillRect(ex+70, ey+28, 22, 74);
+          ctx.fillStyle = "#f0d060"; ctx.fillRect(ex+67, ey+24, 28, 12);
+          ctx.fillStyle = "#ffffc0"; ctx.fillRect(ex+70, ey+26, 22, 6);
+          ctx.fillStyle = "#8a7010"; ctx.fillRect(ex+74, ey+72, 14, 30);
+          break;
+        case "EMF Reader":
+          ctx.fillStyle = "#2a5a80"; ctx.fillRect(ex+76, ey+30, 34, 72);
+          ctx.fillStyle = "#4a8ab0"; ctx.fillRect(ex+80, ey+28, 26, 40);
+          ctx.fillStyle = "#6aaad0"; ctx.fillRect(ex+88, ey+10, 8, 22);
+          ctx.fillStyle = "#e84040"; ctx.fillRect(ex+82, ey+34, 5, 5);
+          ctx.fillStyle = "#40e840"; ctx.fillRect(ex+90, ey+34, 5, 5);
+          ctx.fillStyle = "#e8e840"; ctx.fillRect(ex+98, ey+34, 5, 5);
+          break;
+        case "Spirit Box":
+          ctx.fillStyle = "#3a3020"; ctx.fillRect(ex+62, ey+20, 62, 76);
+          ctx.fillStyle = "#5a4a30"; ctx.fillRect(ex+66, ey+24, 54, 44);
+          ctx.fillStyle = "#1a1410";
+          for (let gr = 0; gr < 4; gr++) for (let gc = 0; gc < 6; gc++)
+            ctx.fillRect(ex+70+gc*8, ey+28+gr*8, 3, 3);
+          ctx.fillStyle = "#e84020"; ctx.fillRect(ex+66, ey+72, 10, 8);
+          ctx.fillStyle = "#7a6040"; ctx.fillRect(ex+96, ey+22, 6, 20);
+          ctx.fillStyle = "#888";    ctx.fillRect(ex+110, ey+22, 8, 4);
+          break;
+        case "UV Flashlight":
+          ctx.fillStyle = "#5a5a20"; ctx.fillRect(ex+84, ey+60, 20, 50);
+          ctx.fillStyle = "#7a7a30"; ctx.fillRect(ex+80, ey+40, 28, 24);
+          ctx.fillStyle = "#a0a040"; ctx.fillRect(ex+78, ey+26, 32, 16);
+          ctx.fillStyle = "rgba(160,160,255,0.5)";
+          ctx.beginPath(); ctx.arc(ex+94, ey+26, 14, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#d0d0ff"; ctx.fillRect(ex+82, ey+18, 24, 10);
+          break;
+        case "Ghost Book":
+          ctx.fillStyle = "#d4c8a0"; ctx.fillRect(ex+56, ey+18, 74, 88);
+          ctx.fillStyle = "#b8aa80"; ctx.fillRect(ex+56, ey+18, 36, 88);
+          ctx.fillStyle = "#1a1208"; ctx.fillRect(ex+91, ey+18, 3, 88);
+          ctx.fillStyle = "#8a7a60";
+          for (let ln = 0; ln < 7; ln++) ctx.fillRect(ex+60, ey+28+ln*10, 28, 2);
+          ctx.fillStyle = "#c04020";
+          for (let ln = 0; ln < 5; ln++) ctx.fillRect(ex+98, ey+30+ln*12, 24, 2);
+          break;
+        case "Video Camera":
+          ctx.fillStyle = "#2a2a2a"; ctx.fillRect(ex+60, ey+24, 66, 46);
+          ctx.fillStyle = "#3a3a3a"; ctx.fillRect(ex+64, ey+28, 58, 38);
+          ctx.fillStyle = "#0a0a14";
+          ctx.beginPath(); ctx.arc(ex+82, ey+47, 14, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#1a1a40";
+          ctx.beginPath(); ctx.arc(ex+82, ey+47, 9, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "rgba(80,80,200,0.4)";
+          ctx.beginPath(); ctx.arc(ex+82, ey+47, 5, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#e84040"; ctx.fillRect(ex+108, ey+30, 8, 5);
+          ctx.fillStyle = "#3a3a3a"; ctx.fillRect(ex+60, ey+70, 66, 10);
+          break;
+        case "Thermometer":
+          ctx.fillStyle = "#c0c0c0"; ctx.fillRect(ex+88, ey+12, 10, 80);
+          ctx.fillStyle = "#e0e0e0"; ctx.fillRect(ex+90, ey+14, 6, 60);
+          ctx.fillStyle = "#e03030";
+          ctx.beginPath(); ctx.arc(ex+93, ey+98, 10, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#808080";
+          for (let tm = 0; tm < 6; tm++) ctx.fillRect(ex+98, ey+20+tm*10, 6, 2);
+          break;
+        case "Sound Recorder":
+          ctx.fillStyle = "#2a2a2a"; ctx.fillRect(ex+72, ey+16, 42, 80);
+          ctx.fillStyle = "#404040"; ctx.fillRect(ex+76, ey+20, 34, 56);
+          ctx.fillStyle = "#1a1a1a";
+          for (let mr = 0; mr < 3; mr++) for (let mc = 0; mc < 3; mc++)
+            ctx.fillRect(ex+80+mc*8, ey+24+mr*8, 4, 4);
+          ctx.fillStyle = "#e84040"; ctx.fillRect(ex+76, ey+82, 8, 6);
+          ctx.fillStyle = "#888";    ctx.fillRect(ex+90, ey+82, 18, 6);
+          break;
+        case "D.O.T.S. Projector":
+          ctx.fillStyle = "#1a1a2a"; ctx.fillRect(ex+60, ey+40, 56, 36);
+          ctx.fillStyle = "#2a2a3a"; ctx.fillRect(ex+62, ey+42, 52, 32);
+          ctx.fillStyle = "#e840e8";
+          for (let dr = 0; dr < 3; dr++) for (let dc = 0; dc < 5; dc++)
+            ctx.fillRect(ex+66+dc*9, ey+46+dr*9, 3, 3);
+          ctx.fillStyle = "#6040c0"; ctx.fillRect(ex+64, ey+80, 48, 6);
+          ctx.fillStyle = "#c0a0ff"; ctx.fillRect(ex+66, ey+44, 52, 2);
+          break;
+        case "Tripod":
+          { const tx = ex+93, ty = ey+90;
+            ctx.strokeStyle = "#606050"; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx, ty-70); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx-44, ty+18); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx+44, ty+18); ctx.stroke();
+            ctx.fillStyle = "#909080"; ctx.fillRect(tx-6, ty-68, 12, 60);
+            ctx.fillStyle = "#707060"; ctx.fillRect(tx-12, ty-74, 24, 10); }
+          break;
+        case "Sanity Meds":
+          ctx.fillStyle = "#e8e8e0"; ctx.fillRect(ex+76, ey+30, 30, 64);
+          ctx.fillStyle = "#e84020"; ctx.fillRect(ex+74, ey+22, 34, 12);
+          ctx.fillStyle = "#4080c0"; ctx.fillRect(ex+76, ey+48, 30, 20);
+          ctx.fillStyle = "#ffffff"; ctx.fillRect(ex+88, ey+52, 6, 12);
+          ctx.fillStyle = "#ffffff"; ctx.fillRect(ex+84, ey+56, 14, 4);
+          break;
+        case "Lighter":
+          ctx.fillStyle = "#c8a020"; ctx.fillRect(ex+82, ey+50, 22, 44);
+          ctx.fillStyle = "#e0b830"; ctx.fillRect(ex+84, ey+52, 18, 40);
+          ctx.fillStyle = "#8a6e10"; ctx.fillRect(ex+82, ey+44, 22, 8);
+          ctx.fillStyle = "rgba(255,160,20,0.7)";
+          ctx.beginPath(); ctx.arc(ex+93, ey+40, 5, 0, Math.PI*2); ctx.fill();
+          break;
+        case "Incense":
+          ctx.fillStyle = "#6a4828"; ctx.fillRect(ex+68, ey+104, 48, 8);
+          ctx.fillStyle = "#c8a060";
+          ctx.fillRect(ex+84, ey+20, 3, 84); ctx.fillRect(ex+90, ey+16, 3, 88); ctx.fillRect(ex+96, ey+20, 3, 84);
+          ctx.fillStyle = "#e84000";
+          ctx.fillRect(ex+84, ey+18, 3, 4); ctx.fillRect(ex+90, ey+14, 3, 4); ctx.fillRect(ex+96, ey+18, 3, 4);
+          break;
+        case "Crucifix":
+          { const ccx = ex+90, ccy = ey+80;
+            ctx.fillStyle = "#c89830";
+            ctx.fillRect(ccx-5, ccy-60, 10, 80); ctx.fillRect(ccx-26, ccy-40, 52, 10);
+            ctx.fillStyle = "#e8b840";
+            ctx.fillRect(ccx-3, ccy-58, 4, 76); ctx.fillRect(ccx-24, ccy-38, 48, 4); }
+          break;
+        default:
+          // Placeholder for items without art yet
+          ctx.fillStyle = "#0c1620"; ctx.fillRect(ex+62, ey+20, 62, 80);
+          ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 1;
+          ctx.strokeRect(ex+62, ey+20, 62, 80);
+          ctx.fillStyle = "#1e5070"; ctx.font = "bold 22px monospace"; ctx.textAlign = "center";
+          ctx.fillText("?", ex+93, ey+68);
+          break;
+      }
+      ctx.restore();
+    }
+
+        function _drawPageShop(bx, by, bw, bh) {
+      // ── Truck loadout monitor ──────────────────────────────────────────────
+      const MX = bx, MY = by, MW = bw, MH = bh;
+
+      // ── Bezel ──
+      ctx.fillStyle = "#111214";
+      ctx.fillRect(MX, MY, MW, MH);
+      ctx.strokeStyle = "#252830"; ctx.lineWidth = 2;
+      ctx.strokeRect(MX + 1, MY + 1, MW - 2, MH - 2);
+      ctx.strokeStyle = "#2e3240"; ctx.lineWidth = 1;
+      ctx.strokeRect(MX + 6, MY + 6, MW - 12, MH - 12);
+
+      // ── Screen area ──
+      const SX = MX + 8, SY = MY + 8, SW = MW - 16, SH = MH - 16;
+      const screenBg = ctx.createLinearGradient(SX, SY, SX, SY + SH);
+      screenBg.addColorStop(0, "#080c10"); screenBg.addColorStop(0.5, "#090e12"); screenBg.addColorStop(1, "#070b0e");
+      ctx.fillStyle = screenBg; ctx.fillRect(SX, SY, SW, SH);
+
+      ctx.save();
+      ctx.beginPath(); ctx.rect(SX, SY, SW, SH); ctx.clip();
+      ctx.strokeStyle = "rgba(0,200,255,0.018)"; ctx.lineWidth = 1;
+      for (let sl = SY; sl < SY + SH; sl += 4) { ctx.beginPath(); ctx.moveTo(SX, sl); ctx.lineTo(SX + SW, sl); ctx.stroke(); }
+      const vigGrad = ctx.createRadialGradient(SX+SW/2, SY+SH/2, SW*0.3, SX+SW/2, SY+SH/2, SW*0.75);
+      vigGrad.addColorStop(0, "rgba(0,0,0,0)"); vigGrad.addColorStop(1, "rgba(0,0,0,0.30)");
+      ctx.fillStyle = vigGrad; ctx.fillRect(SX, SY, SW, SH);
       ctx.restore();
 
       // ── Header bar ──
-      const HDR_H = 28;
-      ctx.fillStyle = "rgba(0,180,60,0.10)"; ctx.fillRect(MX, MY, MW, HDR_H);
-      ctx.strokeStyle = "rgba(0,220,80,0.25)"; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(MX, MY + HDR_H); ctx.lineTo(MX + MW, MY + HDR_H); ctx.stroke();
+      const HDR_H = 32;
+      ctx.fillStyle = "#0c1218"; ctx.fillRect(SX, SY, SW, HDR_H);
+      ctx.strokeStyle = "#1e6080"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(SX, SY + HDR_H); ctx.lineTo(SX + SW, SY + HDR_H); ctx.stroke();
+      ctx.fillStyle = "#1e8ab0"; ctx.fillRect(SX, SY, 3, HDR_H);
       ctx.textAlign = "left";
-      ctx.fillStyle = "#00c840"; ctx.font = "bold 11px monospace";
-      ctx.fillText("PHANTOM RESPONSE UNIT  //  TRUCK LOADOUT", MX + 10, MY + 18);
+      ctx.fillStyle = "#a8d8f0"; ctx.font = "bold 11px monospace";
+      ctx.fillText("PHANTOM RESPONSE UNIT", SX + 14, SY + 13);
+      ctx.fillStyle = "#3a7090"; ctx.font = "9px monospace";
+      ctx.fillText("TRUCK LOADOUT  //  PRE-INVESTIGATION", SX + 14, SY + 25);
       ctx.textAlign = "right";
-      ctx.fillStyle = "#00803a"; ctx.font = "9px monospace";
-      ctx.fillText("UNIT #001  ·  PRE-INVESTIGATION", MX + MW - 10, MY + 18);
+      ctx.fillStyle = "#2a6080"; ctx.font = "8px monospace";
+      ctx.fillText("UNIT #001", SX + SW - 10, SY + 20);
 
-      // ── Layout: left nav + content pane ──
-      const NAV_W   = 90;
-      const BODY_Y  = MY + HDR_H;
-      const BODY_H  = MH - HDR_H;
-      const CONT_X  = MX + NAV_W;
-      const CONT_W  = MW - NAV_W;
+      // ── Layout ──
+      const NAV_W  = 100;
+      const BODY_Y = SY + HDR_H + 1;
+      const BODY_H = SH - HDR_H - 1 - 26;
+      const CONT_X = SX + NAV_W;
+      const CONT_W = SW - NAV_W;
+      const FOO_Y  = SY + SH - 26;
 
-      // Left nav background
-      ctx.fillStyle = "rgba(0,180,60,0.06)"; ctx.fillRect(MX, BODY_Y, NAV_W, BODY_H);
-      ctx.strokeStyle = "rgba(0,200,70,0.18)"; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(MX + NAV_W, BODY_Y); ctx.lineTo(MX + NAV_W, BODY_Y + BODY_H); ctx.stroke();
+      // ── Left nav ──
+      ctx.fillStyle = "#080c10"; ctx.fillRect(SX, BODY_Y, NAV_W, BODY_H);
+      ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(SX + NAV_W, BODY_Y); ctx.lineTo(SX + NAV_W, BODY_Y + BODY_H); ctx.stroke();
 
-      // Nav items
       const NAV_TABS = [
         { tab: "shop",      label: "SHOP"      },
         { tab: "truck",     label: "TRUCK"     },
         { tab: "character", label: "CHARACTER" },
       ];
-      const NAV_ITEM_H = 32, NAV_ITEM_GAP = 2, NAV_START_Y = BODY_Y + 18;
+      const NAV_ITEM_H = 36, NAV_PAD_Y = 14;
       _truckNavRects = [];
       for (let ni = 0; ni < NAV_TABS.length; ni++) {
         const { tab, label } = NAV_TABS[ni];
-        const ny  = NAV_START_Y + ni * (NAV_ITEM_H + NAV_ITEM_GAP);
-        const nx  = MX + 4;
-        const nw  = NAV_W - 8;
+        const ny = BODY_Y + NAV_PAD_Y + ni * (NAV_ITEM_H + 1);
+        const nx = SX + 6, nw = NAV_W - 12;
         const isActive = _truckTab === tab;
-        const isHov    = _titleMx >= nx && _titleMx <= nx+nw && _titleMy >= ny && _titleMy <= ny+NAV_ITEM_H;
-
-        // Store rect for click detection
+        const isHov = !isActive && _titleMx >= nx && _titleMx <= nx+nw && _titleMy >= ny && _titleMy <= ny+NAV_ITEM_H;
         _truckNavRects.push({ tab, x: nx, y: ny, w: nw, h: NAV_ITEM_H });
-
-        // Background
         if (isActive) {
-          ctx.fillStyle = "rgba(0,220,80,0.18)";
-          ctx.fillRect(nx, ny, nw, NAV_ITEM_H);
-          // Active left accent bar
-          ctx.fillStyle = "#00d050";
-          ctx.fillRect(nx, ny, 3, NAV_ITEM_H);
+          ctx.fillStyle = "#0e1e2c"; ctx.fillRect(nx, ny, nw, NAV_ITEM_H);
+          ctx.fillStyle = "#1e8ab0"; ctx.fillRect(nx, ny, 3, NAV_ITEM_H);
+          ctx.strokeStyle = "#1e5070"; ctx.lineWidth = 1;
+          ctx.strokeRect(nx + 0.5, ny + 0.5, nw - 1, NAV_ITEM_H - 1);
+          ctx.textAlign = "left"; ctx.fillStyle = "#90d0f0"; ctx.font = "bold 9px monospace";
+          ctx.fillText(label, nx + 12, ny + NAV_ITEM_H/2 + 4);
         } else if (isHov) {
-          ctx.fillStyle = "rgba(0,180,60,0.10)";
-          ctx.fillRect(nx, ny, nw, NAV_ITEM_H);
+          ctx.fillStyle = "#0a1520"; ctx.fillRect(nx, ny, nw, NAV_ITEM_H);
+          ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 0.5;
+          ctx.strokeRect(nx + 0.5, ny + 0.5, nw - 1, NAV_ITEM_H - 1);
+          ctx.textAlign = "left"; ctx.fillStyle = "#4a8090"; ctx.font = "9px monospace";
+          ctx.fillText(label, nx + 12, ny + NAV_ITEM_H/2 + 4);
+        } else {
+          ctx.textAlign = "left"; ctx.fillStyle = "#2a5060"; ctx.font = "9px monospace";
+          ctx.fillText(label, nx + 12, ny + NAV_ITEM_H/2 + 4);
         }
-
-        // Border
-        ctx.strokeStyle = isActive ? "rgba(0,220,80,0.35)" : "rgba(0,160,50,0.10)";
-        ctx.lineWidth = 0.8;
-        ctx.strokeRect(nx+0.5, ny+0.5, nw-1, NAV_ITEM_H-1);
-
-        // Label
-        ctx.textAlign = "center";
-        ctx.fillStyle = isActive ? "#00e860" : (isHov ? "#009040" : "#006030");
-        ctx.font = (isActive ? "bold " : "") + "9px monospace";
-        ctx.fillText(label, nx + nw/2, ny + NAV_ITEM_H/2 + 4);
       }
 
       // ── Content pane ──
       ctx.save();
       ctx.beginPath(); ctx.rect(CONT_X, BODY_Y, CONT_W, BODY_H); ctx.clip();
+      const CP = 14;
 
       if (_truckTab === "shop") {
-        // ── SHOP subpage ──
-        const TABLE_Y = BODY_Y + 16;
-        const COL_TAG    = CONT_X + 10,
-              COL_NAME   = CONT_X + 62,
-              COL_TIER   = CONT_X + CONT_W*0.52,
-              COL_STATUS = CONT_X + CONT_W*0.68,
-              COL_LOAD   = CONT_X + CONT_W*0.84;
+        // ── Layout: left preview panel | right list panel ──
+        const PREV_W = 172;  // width of the left preview column
+        const LIST_X = CONT_X + PREV_W + 1; // list panel starts here
+        const LIST_W = CONT_W - PREV_W - 1;
 
-        // Column header row
-        ctx.fillStyle = "rgba(0,200,70,0.07)"; ctx.fillRect(CONT_X, TABLE_Y - 13, CONT_W, 16);
-        ctx.strokeStyle = "rgba(0,200,70,0.15)"; ctx.lineWidth = 0.5;
-        ctx.beginPath(); ctx.moveTo(CONT_X, TABLE_Y + 3); ctx.lineTo(CONT_X + CONT_W, TABLE_Y + 3); ctx.stroke();
-        ctx.fillStyle = "#006828"; ctx.font = "bold 8px monospace"; ctx.textAlign = "left";
-        ctx.fillText("ID",     COL_TAG,    TABLE_Y);
-        ctx.fillText("ITEM",   COL_NAME,   TABLE_Y);
-        ctx.fillText("TIER",   COL_TIER,   TABLE_Y);
-        ctx.fillText("STATUS", COL_STATUS, TABLE_Y);
-        ctx.fillText("LOAD",   COL_LOAD,   TABLE_Y);
+        // ── Left: preview panel ──
+        const sel = SHOP_CATALOG[_shopSelectedItem];
 
-        const ROW_H = 24, ROW_Y0 = TABLE_Y + 12;
-        for (let i = 0; i < SHOP_ITEMS.length; i++) {
-          const item = SHOP_ITEMS[i];
-          const ry   = ROW_Y0 + i * ROW_H;
-          if (ry + ROW_H > BODY_Y + BODY_H - 22) break;
-          const eq = item.status === "EQUIPPED";
-          ctx.fillStyle = `rgba(0,${eq?220:120},${eq?80:60},${eq?0.07:0.03})`;
-          ctx.fillRect(CONT_X + 2, ry, CONT_W - 4, ROW_H - 2);
-          ctx.strokeStyle = "rgba(0,160,50,0.09)"; ctx.lineWidth = 0.5;
-          ctx.beginPath(); ctx.moveTo(CONT_X+6, ry+ROW_H-2); ctx.lineTo(CONT_X+CONT_W-6, ry+ROW_H-2); ctx.stroke();
-          const ty = ry + 15;
-          ctx.fillStyle = eq ? "#00b840" : "#006030"; ctx.font = "bold 8px monospace"; ctx.textAlign = "left";
-          ctx.fillText(item.tag,  COL_TAG,  ty);
-          ctx.fillStyle = eq ? "#40e880" : "#2a6040"; ctx.font = (eq?"bold ":"")+"9px monospace";
-          ctx.fillText(item.name, COL_NAME, ty);
-          ctx.fillStyle = "#005828"; ctx.font = "8px monospace";
-          ctx.fillText("T-"+item.tier, COL_TIER, ty);
-          if (eq) {
-            ctx.fillStyle = "rgba(0,180,60,0.22)"; ctx.fillRect(COL_STATUS-2, ry+3, 52, ROW_H-8);
-            ctx.fillStyle = "#00d050"; ctx.font = "bold 7px monospace";
-            ctx.fillText("● EQUIPPED", COL_STATUS+2, ty);
-          } else {
-            ctx.fillStyle = "#004020"; ctx.font = "7px monospace";
-            ctx.fillText("◌ LOCKED", COL_STATUS+2, ty);
-          }
-          ctx.fillStyle = eq ? "#00a840" : "#003018"; ctx.font = "9px monospace";
-          ctx.fillText(eq ? "■" : "□", COL_LOAD+4, ty);
+        // Icon preview box
+        const ICON_SZ = 110;
+        const iconX = CONT_X + PREV_W/2;
+        const iconY = BODY_Y + 14 + ICON_SZ/2;
+        ctx.fillStyle = "#0c1620";
+        ctx.fillRect(CONT_X + (PREV_W - ICON_SZ)/2, BODY_Y + 14, ICON_SZ, ICON_SZ);
+        ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 1;
+        ctx.strokeRect(CONT_X + (PREV_W - ICON_SZ)/2 + 0.5, BODY_Y + 14.5, ICON_SZ - 1, ICON_SZ - 1);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(CONT_X + (PREV_W - ICON_SZ)/2, BODY_Y + 14, ICON_SZ, ICON_SZ); ctx.clip();
+        _drawShopItemIcon(sel.name, iconX, iconY, 0.88);
+        ctx.restore();
+
+        // Item name
+        const nameY = BODY_Y + 14 + ICON_SZ + 13;
+        ctx.textAlign = "center"; ctx.fillStyle = "#90d0f0"; ctx.font = "bold 10px monospace";
+        ctx.fillText(sel.name, CONT_X + PREV_W/2, nameY);
+
+        // Category badge
+        const catColor = sel.cat === "starter" ? "#1e4830" : "#1e2e40";
+        const catLabel = sel.cat === "starter" ? "STARTER" : "OPTIONAL";
+        ctx.fillStyle = catColor; ctx.fillRect(CONT_X + 10, nameY + 5, PREV_W - 20, 13);
+        ctx.strokeStyle = sel.cat === "starter" ? "#1e6040" : "#1a3a50"; ctx.lineWidth = 0.5;
+        ctx.strokeRect(CONT_X + 10 + 0.5, nameY + 5.5, PREV_W - 21, 12);
+        ctx.fillStyle = sel.cat === "starter" ? "#30a060" : "#3a7090";
+        ctx.font = "bold 7px monospace";
+        ctx.fillText(catLabel, CONT_X + PREV_W/2, nameY + 14);
+
+        // ── Upgrade placeholder panel ──
+        const upY = nameY + 24;
+        const upH = 50;
+        ctx.fillStyle = "#0a1420"; ctx.fillRect(CONT_X + 8, upY, PREV_W - 16, upH);
+        ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 0.5;
+        ctx.strokeRect(CONT_X + 8 + 0.5, upY + 0.5, PREV_W - 17, upH - 1);
+        // Header label
+        ctx.fillStyle = "#1e4860"; ctx.fillRect(CONT_X + 8, upY, PREV_W - 16, 13);
+        ctx.fillStyle = "#2a6070"; ctx.font = "bold 7px monospace"; ctx.textAlign = "left";
+        ctx.fillText("UPGRADES", CONT_X + 13, upY + 9);
+        // Tier dots — 3 upgrade slots, all locked
+        const dotSpacing = (PREV_W - 32) / 3;
+        for (let ud = 0; ud < 3; ud++) {
+          const dotX = CONT_X + 16 + ud * dotSpacing + dotSpacing/2;
+          const dotY = upY + 32;
+          ctx.fillStyle = "#0e1e2c"; ctx.beginPath(); ctx.arc(dotX, dotY, 8, 0, Math.PI*2); ctx.fill();
+          ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(dotX, dotY, 8, 0, Math.PI*2); ctx.stroke();
+          ctx.fillStyle = "#1a3040"; ctx.font = "bold 8px monospace"; ctx.textAlign = "center";
+          ctx.fillText((ud+1).toString(), dotX, dotY + 4);
         }
+        ctx.fillStyle = "#1a3040"; ctx.font = "7px monospace"; ctx.textAlign = "center";
+        ctx.fillText("locked", CONT_X + PREV_W/2, upY + upH - 6);
 
+        // Description text — word-wrap
+        const descY = upY + upH + 10;
+        const maxDescW = PREV_W - 14;
+        ctx.fillStyle = "#2a5060"; ctx.font = "8px monospace"; ctx.textAlign = "left";
+        const words = sel.desc.split(" ");
+        let line = "", lineY = descY;
+        for (const word of words) {
+          const test = line ? line + " " + word : word;
+          if (ctx.measureText(test).width > maxDescW && line) {
+            ctx.fillText(line, CONT_X + 7, lineY);
+            line = word; lineY += 12;
+          } else { line = test; }
+        }
+        if (line) ctx.fillText(line, CONT_X + 7, lineY);
+
+        // Vertical divider between preview and list
+        ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(LIST_X, BODY_Y); ctx.lineTo(LIST_X, BODY_Y + BODY_H); ctx.stroke();
+
+        // ── Right: scrollable item list ──
+        const ROW_H = 26;
+        const VISIBLE = Math.floor(BODY_H / ROW_H);
+        _shopScrollOffset = Math.max(0, Math.min(_shopScrollOffset, SHOP_CATALOG.length - VISIBLE));
+        _shopItemRects = [];
+
+        // Column header — two rows: money bar + catalog label
+        const HDR2 = 32; // two-row header height
+        ctx.fillStyle = "#0c1420"; ctx.fillRect(LIST_X, BODY_Y, LIST_W, HDR2);
+        // Money bar (top row)
+        ctx.fillStyle = "#0c1c28"; ctx.fillRect(LIST_X, BODY_Y, LIST_W, 16);
+        ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(LIST_X, BODY_Y + 16); ctx.lineTo(LIST_X + LIST_W, BODY_Y + 16); ctx.stroke();
+        ctx.fillStyle = "#1a4a30"; ctx.font = "bold 8px monospace"; ctx.textAlign = "left";
+        ctx.fillText("FUNDS", LIST_X + 10, BODY_Y + 11);
+        // Money value — prominent
+        const moneyStr = "$" + playerMoney.toLocaleString();
+        ctx.fillStyle = playerMoney > 0 ? "#50e090" : "#2a5040";
+        ctx.font = "bold 9px monospace"; ctx.textAlign = "right";
+        ctx.fillText(moneyStr, LIST_X + LIST_W - 10, BODY_Y + 11);
+        // Catalog label (second row)
+        ctx.fillStyle = "#2a6070"; ctx.font = "bold 8px monospace"; ctx.textAlign = "left";
+        ctx.fillText("EQUIPMENT CATALOG", LIST_X + 10, BODY_Y + 27);
+        ctx.textAlign = "right";
+        ctx.fillStyle = "#1a3a50"; ctx.font = "8px monospace";
+        ctx.fillText(_shopScrollOffset + 1 + "–" + Math.min(_shopScrollOffset + VISIBLE, SHOP_CATALOG.length) + " / " + SHOP_CATALOG.length, LIST_X + LIST_W - 8, BODY_Y + 27);
+        ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(LIST_X, BODY_Y + HDR2); ctx.lineTo(LIST_X + LIST_W, BODY_Y + HDR2); ctx.stroke();
+
+        const ROW_Y0 = BODY_Y + HDR2 + 2;
+        ctx.save();
+        ctx.beginPath(); ctx.rect(LIST_X, ROW_Y0, LIST_W, BODY_H - 20); ctx.clip();
+        for (let vi = 0; vi < VISIBLE; vi++) {
+          const ci = _shopScrollOffset + vi;
+          if (ci >= SHOP_CATALOG.length) break;
+          const entry  = SHOP_CATALOG[ci];
+          const ry     = ROW_Y0 + vi * ROW_H;
+          const isSel  = ci === _shopSelectedItem;
+          const isHov  = !isSel && _titleMx >= LIST_X && _titleMx <= LIST_X + LIST_W &&
+                         _titleMy >= ry && _titleMy <= ry + ROW_H;
+
+          _shopItemRects.push({ idx: ci, x: LIST_X, y: ry, w: LIST_W, h: ROW_H });
+
+          // Row background
+          if (isSel) {
+            ctx.fillStyle = "rgba(30,100,140,0.20)"; ctx.fillRect(LIST_X, ry, LIST_W, ROW_H - 1);
+            ctx.fillStyle = "#1e8ab0"; ctx.fillRect(LIST_X, ry, 3, ROW_H - 1);
+          } else if (isHov) {
+            ctx.fillStyle = "rgba(30,80,100,0.10)"; ctx.fillRect(LIST_X, ry, LIST_W, ROW_H - 1);
+          } else if (vi % 2 === 0) {
+            ctx.fillStyle = "rgba(255,255,255,0.015)"; ctx.fillRect(LIST_X, ry, LIST_W, ROW_H - 1);
+          }
+          // Row divider
+          ctx.strokeStyle = "#0e1e2c"; ctx.lineWidth = 0.5;
+          ctx.beginPath(); ctx.moveTo(LIST_X + 6, ry + ROW_H - 1); ctx.lineTo(LIST_X + LIST_W - 6, ry + ROW_H - 1); ctx.stroke();
+
+          const ty = ry + 17;
+          // Item name
+          ctx.textAlign = "left";
+          ctx.fillStyle = isSel ? "#90d0f0" : (isHov ? "#4a8090" : "#2a5060");
+          ctx.font = (isSel ? "bold " : "") + "10px monospace";
+          ctx.fillText(entry.name, LIST_X + 12, ty);
+          // Category dot
+          ctx.fillStyle = entry.cat === "starter" ? "#1e7050" : "#1a3a50";
+          ctx.beginPath(); ctx.arc(LIST_X + LIST_W - 12, ry + ROW_H/2, 3, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.restore();
+
+        // Scroll indicator (thin bar on right edge of list)
+        if (SHOP_CATALOG.length > VISIBLE) {
+          const sbH   = BODY_H - 20;
+          const thumbH = Math.max(20, sbH * VISIBLE / SHOP_CATALOG.length);
+          const thumbY = ROW_Y0 + (_shopScrollOffset / (SHOP_CATALOG.length - VISIBLE)) * (sbH - thumbH);
+          ctx.fillStyle = "#0c1620"; ctx.fillRect(LIST_X + LIST_W - 6, ROW_Y0, 6, sbH);
+          ctx.fillStyle = "#1e5070"; ctx.fillRect(LIST_X + LIST_W - 5, thumbY, 4, thumbH);
+        }
       } else if (_truckTab === "truck") {
-        // ── TRUCK subpage (placeholder) ──
-        ctx.textAlign = "center";
-        ctx.fillStyle = "#006828"; ctx.font = "bold 11px monospace";
-        ctx.fillText("TRUCK OVERVIEW", CONT_X + CONT_W/2, BODY_Y + 40);
-        ctx.strokeStyle = "rgba(0,200,70,0.20)"; ctx.lineWidth = 0.5;
-        ctx.beginPath(); ctx.moveTo(CONT_X+10, BODY_Y+48); ctx.lineTo(CONT_X+CONT_W-10, BODY_Y+48); ctx.stroke();
-        ctx.fillStyle = "#004020"; ctx.font = "9px monospace";
-        ctx.fillText("Vehicle status, condition, and loadout map.", CONT_X + CONT_W/2, BODY_Y + 70);
-        ctx.fillStyle = "#003018"; ctx.font = "8px monospace";
-        ctx.fillText("— COMING SOON —", CONT_X + CONT_W/2, BODY_Y + 90);
+        // ── TRUCK TAB — amber/warm palette to distinguish from Shop (blue/teal) ──
+        const T_ACCENT   = "#b86c10";   // amber accent line
+        const T_ACTIVE   = "#c87820";   // warm gold for selected state
+        const T_DIM      = "#5a3810";   // dim amber for inactive text
+        const T_BRIGHT   = "#f0c060";   // bright gold for selected text / headers
+        const T_BG       = "#100c06";   // warm near-black background
+        const T_ROW_SEL  = "rgba(180,100,20,0.18)";
+        const T_ROW_HOV  = "rgba(140,80,10,0.10)";
+        const T_ROW_ALT  = "rgba(255,200,100,0.015)";
 
-      } else if (_truckTab === "character") {
-        // ── CHARACTER subpage (placeholder) ──
+        const PREV_W = 172;
+        const LIST_X = CONT_X + PREV_W + 1;
+        const LIST_W = CONT_W - PREV_W - 1;
+        const tsel   = TRUCK_CATALOG[_truckSelItem];
+
+        // ── Left: item preview ──
+        const ICON_SZ = 110;
+        const iconX   = CONT_X + PREV_W/2;
+        const iconY   = BODY_Y + 14 + ICON_SZ/2;
+
+        // Icon box — warm dark background
+        ctx.fillStyle = "#0e0906";
+        ctx.fillRect(CONT_X + (PREV_W - ICON_SZ)/2, BODY_Y + 14, ICON_SZ, ICON_SZ);
+        ctx.strokeStyle = "#3a2010"; ctx.lineWidth = 1;
+        ctx.strokeRect(CONT_X + (PREV_W - ICON_SZ)/2 + 0.5, BODY_Y + 14.5, ICON_SZ - 1, ICON_SZ - 1);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(CONT_X + (PREV_W - ICON_SZ)/2, BODY_Y + 14, ICON_SZ, ICON_SZ); ctx.clip();
+        _drawShopItemIcon(tsel.name, iconX, iconY, 0.88);
+        ctx.restore();
+
+        // Item name
+        const tnameY = BODY_Y + 14 + ICON_SZ + 13;
+        ctx.textAlign = "center"; ctx.fillStyle = T_BRIGHT; ctx.font = "bold 10px monospace";
+        ctx.fillText(tsel.name, CONT_X + PREV_W/2, tnameY);
+
+        // Role badge
+        ctx.fillStyle = "#2a1a06"; ctx.fillRect(CONT_X + 10, tnameY + 5, PREV_W - 20, 13);
+        ctx.strokeStyle = "#4a2a08"; ctx.lineWidth = 0.5;
+        ctx.strokeRect(CONT_X + 10.5, tnameY + 5.5, PREV_W - 21, 12);
+        ctx.fillStyle = "#a06020"; ctx.font = "bold 7px monospace"; ctx.textAlign = "center";
+        ctx.fillText(tsel.role.toUpperCase(), CONT_X + PREV_W/2, tnameY + 14);
+
+        // ── Loadout slot placeholder ──
+        const slotY = tnameY + 24;
+        const slotH = 40;
+        ctx.fillStyle = "#0c0804"; ctx.fillRect(CONT_X + 8, slotY, PREV_W - 16, slotH);
+        ctx.strokeStyle = "#3a2010"; ctx.lineWidth = 0.5;
+        ctx.strokeRect(CONT_X + 8.5, slotY + 0.5, PREV_W - 17, slotH - 1);
+        ctx.fillStyle = "#2a1806"; ctx.fillRect(CONT_X + 8, slotY, PREV_W - 16, 13);
+        ctx.fillStyle = T_DIM; ctx.font = "bold 7px monospace"; ctx.textAlign = "left";
+        ctx.fillText("PACK FOR ROUND", CONT_X + 13, slotY + 9);
+        // Placeholder pack button area
+        ctx.fillStyle = "#1a1006"; ctx.fillRect(CONT_X + 14, slotY + 16, PREV_W - 28, 18);
+        ctx.strokeStyle = "#3a2010"; ctx.lineWidth = 0.5;
+        ctx.strokeRect(CONT_X + 14.5, slotY + 16.5, PREV_W - 29, 17);
+        ctx.fillStyle = "#3a2010"; ctx.font = "bold 8px monospace"; ctx.textAlign = "center";
+        ctx.fillText("+ ADD TO TRUCK", CONT_X + PREV_W/2, slotY + 28);
+
+        // Hint text — word-wrap
+        const thintY = slotY + slotH + 10;
+        const tmaxW  = PREV_W - 14;
+        ctx.fillStyle = "#5a3818"; ctx.font = "8px monospace"; ctx.textAlign = "left";
+        const thWords = ("TIP: " + tsel.hint).split(" ");
+        let tLine = "", tLineY = thintY;
+        for (const w of thWords) {
+          const test = tLine ? tLine + " " + w : w;
+          if (ctx.measureText(test).width > tmaxW && tLine) {
+            ctx.fillText(tLine, CONT_X + 7, tLineY); tLine = w; tLineY += 12;
+          } else { tLine = test; }
+        }
+        if (tLine) ctx.fillText(tLine, CONT_X + 7, tLineY);
+
+        // Vertical divider
+        ctx.strokeStyle = "#3a2010"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(LIST_X, BODY_Y); ctx.lineTo(LIST_X, BODY_Y + BODY_H); ctx.stroke();
+
+        // ── Right: scrollable item list ──
+        const ROW_H  = 26;
+        const TVIS   = Math.floor(BODY_H / ROW_H);
+        _truckListScroll = Math.max(0, Math.min(_truckListScroll, TRUCK_CATALOG.length - TVIS));
+        _truckItemRects  = [];
+
+        // Header — two rows: loadout status + catalog label
+        const THDR = 32;
+        ctx.fillStyle = "#100a04"; ctx.fillRect(LIST_X, BODY_Y, LIST_W, THDR);
+        ctx.fillStyle = "#140e06"; ctx.fillRect(LIST_X, BODY_Y, LIST_W, 16);
+        ctx.strokeStyle = "#3a2010"; ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(LIST_X, BODY_Y + 16); ctx.lineTo(LIST_X + LIST_W, BODY_Y + 16); ctx.stroke();
+        ctx.fillStyle = "#4a2808"; ctx.font = "bold 8px monospace"; ctx.textAlign = "left";
+        ctx.fillText("TRUCK LOADOUT", LIST_X + 10, BODY_Y + 11);
+        ctx.fillStyle = "#3a1a04"; ctx.font = "bold 9px monospace"; ctx.textAlign = "right";
+        ctx.fillText("0 / 3 PACKED", LIST_X + LIST_W - 10, BODY_Y + 11);
+        ctx.fillStyle = "#4a3010"; ctx.font = "bold 8px monospace"; ctx.textAlign = "left";
+        ctx.fillText("AVAILABLE EQUIPMENT", LIST_X + 10, BODY_Y + 27);
+        ctx.textAlign = "right"; ctx.fillStyle = "#2a1808"; ctx.font = "8px monospace";
+        ctx.fillText((_truckListScroll + 1) + "–" + Math.min(_truckListScroll + TVIS, TRUCK_CATALOG.length) + " / " + TRUCK_CATALOG.length, LIST_X + LIST_W - 8, BODY_Y + 27);
+        ctx.strokeStyle = "#3a2010"; ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(LIST_X, BODY_Y + THDR); ctx.lineTo(LIST_X + LIST_W, BODY_Y + THDR); ctx.stroke();
+
+        const TROW_Y0 = BODY_Y + THDR + 2;
+        ctx.save();
+        ctx.beginPath(); ctx.rect(LIST_X, TROW_Y0, LIST_W, BODY_H - THDR - 2); ctx.clip();
+        for (let vi = 0; vi < TVIS; vi++) {
+          const ci = _truckListScroll + vi;
+          if (ci >= TRUCK_CATALOG.length) break;
+          const entry  = TRUCK_CATALOG[ci];
+          const ry     = TROW_Y0 + vi * ROW_H;
+          const isSel  = ci === _truckSelItem;
+          const isHov  = !isSel && _titleMx >= LIST_X && _titleMx <= LIST_X + LIST_W
+                         && _titleMy >= ry && _titleMy <= ry + ROW_H;
+
+          _truckItemRects.push({ idx: ci, x: LIST_X, y: ry, w: LIST_W, h: ROW_H });
+
+          if (isSel) {
+            ctx.fillStyle = T_ROW_SEL; ctx.fillRect(LIST_X, ry, LIST_W, ROW_H - 1);
+            ctx.fillStyle = T_ACTIVE;  ctx.fillRect(LIST_X, ry, 3, ROW_H - 1);
+          } else if (isHov) {
+            ctx.fillStyle = T_ROW_HOV; ctx.fillRect(LIST_X, ry, LIST_W, ROW_H - 1);
+          } else if (vi % 2 === 0) {
+            ctx.fillStyle = T_ROW_ALT; ctx.fillRect(LIST_X, ry, LIST_W, ROW_H - 1);
+          }
+          // Row divider
+          ctx.strokeStyle = "#1a0e04"; ctx.lineWidth = 0.5;
+          ctx.beginPath(); ctx.moveTo(LIST_X + 6, ry + ROW_H - 1); ctx.lineTo(LIST_X + LIST_W - 6, ry + ROW_H - 1); ctx.stroke();
+
+          const ty = ry + 17;
+          ctx.textAlign = "left";
+          ctx.fillStyle = isSel ? T_BRIGHT : (isHov ? "#806030" : T_DIM);
+          ctx.font = (isSel ? "bold " : "") + "10px monospace";
+          ctx.fillText(entry.name, LIST_X + 12, ty);
+          // Role tag (right side)
+          ctx.fillStyle = isSel ? "#7a4820" : "#2a1808"; ctx.font = "7px monospace"; ctx.textAlign = "right";
+          ctx.fillText(entry.role, LIST_X + LIST_W - 16, ty);
+        }
+        ctx.restore();
+
+        // Scrollbar
+        if (TRUCK_CATALOG.length > TVIS) {
+          const sbH    = BODY_H - THDR - 2;
+          const thumbH = Math.max(20, sbH * TVIS / TRUCK_CATALOG.length);
+          const thumbY = TROW_Y0 + (_truckListScroll / (TRUCK_CATALOG.length - TVIS)) * (sbH - thumbH);
+          ctx.fillStyle = "#0e0804"; ctx.fillRect(LIST_X + LIST_W - 6, TROW_Y0, 6, sbH);
+          ctx.fillStyle = "#4a2808"; ctx.fillRect(LIST_X + LIST_W - 5, thumbY, 4, thumbH);
+        }
+      } else {
+        // ── CHARACTER tab ──
+        const cy2 = BODY_Y + BODY_H / 2;
         ctx.textAlign = "center";
-        ctx.fillStyle = "#006828"; ctx.font = "bold 11px monospace";
-        ctx.fillText("AGENT PROFILE", CONT_X + CONT_W/2, BODY_Y + 40);
-        ctx.strokeStyle = "rgba(0,200,70,0.20)"; ctx.lineWidth = 0.5;
-        ctx.beginPath(); ctx.moveTo(CONT_X+10, BODY_Y+48); ctx.lineTo(CONT_X+CONT_W-10, BODY_Y+48); ctx.stroke();
-        ctx.fillStyle = "#004020"; ctx.font = "9px monospace";
-        ctx.fillText("Investigator perks, unlocks, and stats.", CONT_X + CONT_W/2, BODY_Y + 70);
-        ctx.fillStyle = "#003018"; ctx.font = "8px monospace";
-        ctx.fillText("— COMING SOON —", CONT_X + CONT_W/2, BODY_Y + 90);
+        ctx.fillStyle = "#2a5060"; ctx.font = "bold 13px monospace";
+        ctx.fillText("COMING SOON", CONT_X + CONT_W/2, cy2);
+        ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 0.5;
+        ctx.beginPath(); ctx.moveTo(CONT_X + CP*3, cy2 + 10); ctx.lineTo(CONT_X + CONT_W - CP*3, cy2 + 10); ctx.stroke();
+        ctx.fillStyle = "#1a3040"; ctx.font = "8px monospace";
+        ctx.fillText("Character customization and perks.", CONT_X + CONT_W/2, cy2 + 26);
       }
-
       ctx.restore();
 
       // ── Footer bar ──
-      const FOO_Y = MY + MH - 22;
-      ctx.fillStyle = "rgba(0,150,50,0.08)"; ctx.fillRect(MX, FOO_Y, MW, 22);
-      ctx.strokeStyle = "rgba(0,200,70,0.20)"; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(MX, FOO_Y); ctx.lineTo(MX+MW, FOO_Y); ctx.stroke();
+      ctx.fillStyle = "#080c10"; ctx.fillRect(SX, FOO_Y, SW, 26);
+      ctx.strokeStyle = "#1a3a50"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(SX, FOO_Y); ctx.lineTo(SX + SW, FOO_Y); ctx.stroke();
       ctx.textAlign = "center";
-      ctx.fillStyle = "#005828"; ctx.font = "8px monospace";
-      ctx.fillText("— SHOP UNLOCKS WITH PROGRESSION  ·  CURRENT LOADOUT: DEFAULT —", MX + MW/2, FOO_Y + 14);
+      ctx.fillStyle = "#1e4860"; ctx.font = "8px monospace";
+      ctx.fillText("SHOP UNLOCKS WITH PROGRESSION  \u00b7  CURRENT LOADOUT: DEFAULT", SX + SW/2, FOO_Y + 16);
 
-      // Monitor stand
-      ctx.fillStyle = "#090909"; ctx.fillRect(MX + MW*0.35, MY + MH + 10, MW*0.30, 6);
-      ctx.fillStyle = "#0d0d0f"; ctx.fillRect(MX + MW*0.32, MY + MH + 15, MW*0.36, 4);
+      // Screen inner border
+      ctx.strokeStyle = "#1a2a38"; ctx.lineWidth = 1;
+      ctx.strokeRect(SX + 0.5, SY + 0.5, SW - 1, SH - 1);
 
       ctx.textAlign = "left";
     }
+
 
     // ── Board content: INVESTIGATOR / START ROUND (fullscreen) ───────────────
     function _drawPageProfile(bx, by, bw, bh) {
@@ -7277,7 +7726,8 @@
       // ── Full-screen corkboard panel ──
       const MARGIN = 14, TOPBAR = 36;
       const bx = MARGIN, by = TOPBAR + 4, bw = W - MARGIN*2, bh = H - TOPBAR - MARGIN - 4;
-      _tsBoard(bx, by, bw, bh, ["MAP SELECTION","TRUCK LOADOUT","INVESTIGATOR"][_corkboardPage]);
+      // Cork panel only for map/investigator pages; truck page draws its own monitor background
+      if (_corkboardPage !== 1) _tsBoard(bx, by, bw, bh, ["MAP SELECTION","TRUCK LOADOUT","INVESTIGATOR"][_corkboardPage]);
 
       // ── Draw active page content ──
       if      (_corkboardPage === 0) _drawPageMap(bx, by, bw, bh);
