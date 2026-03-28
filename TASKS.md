@@ -118,6 +118,12 @@
 - [x] Ghost Orbs: camera-only floating orbs (4 per round); drift+bounce inside ghost's room; flicker alpha; visible only in handheld camera view and CCTV feed; ORB badge notification in both viewfinder and CCTV chrome when orb in cone
 - [x] Ghost behavior from type: getGhostBehavior() wired to movement speed, event rate, roam tendency; specialRules enforced (dots_camera_only, no_room_migration); Goryo DOTS only visible through held camera viewfinder
 - [x] Journal placement fix: Journal on van pegboard (not auto-equipped); tap G = instant drop closed; hold G (≥250ms) = placement preview; J during preview toggles OPEN/CLOSED state; active=open, inactive=closed; ghost writes in placed open journal; heavy ink scrawls + bleed tint for written state
+- [x] Journal keybind page update: full control list (rebindable + fixed), scrollable right page with scroll indicator
+- [x] Voodoo Doll input rework: E pushes random unused pin, R exits popup, no manual pin selection
+- [x] Music Box functionality: R activates, ghost sings (pulse ring + ♪ note), direction arrow, loudness bar, 1.5s hunt trigger
+- [x] Music Box break behavior: shatters into 2 inert floor pieces on hunt trigger, removed from hand
+- [x] Tarot Cards functionality: R opens popup, E draws one card, 10-card shuffled deck, card art only, burn effect, 10 effects mapped
+- [x] Pre-game lobby: warehouse staging area, van parked inside, corkboard start station, E/click to begin round
 - [ ] Ghost hunt mode (chases player, causes lose condition)
 - [ ] Tilemap / multi-room map
 

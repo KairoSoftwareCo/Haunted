@@ -25,13 +25,264 @@
       /* CSS width/height set dynamically by resizeCanvas() to fill viewport at 4:3 */
     }
     #titleScreen {
+      position: fixed;
+      inset: 0;
+      background: #0d0b08;
+      overflow-y: auto;
+      padding: env(safe-area-inset-top, 12px) env(safe-area-inset-right, 12px)
+               env(safe-area-inset-bottom, 12px) env(safe-area-inset-left, 12px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+    }
+    .ts-header {
+      text-align: center;
+      margin-bottom: 18px;
+    }
+    .ts-header h1 {
+      font-family: 'Georgia', serif;
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      color: #e8c97a;
+      letter-spacing: 0.18em;
+      text-shadow: 0 0 18px rgba(232,201,122,0.35);
+      margin: 0 0 4px 0;
+    }
+    .ts-header p {
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: #7a6840;
+      letter-spacing: 0.06em;
+      margin: 0;
+    }
+    /* Corkboard row */
+    .ts-boards {
+      display: flex;
+      flex-direction: row;
+      gap: 14px;
+      align-items: flex-start;
+      justify-content: center;
+      flex-wrap: wrap;
+      width: 100%;
+      max-width: 860px;
+    }
+    /* Individual board panel */
+    .ts-board {
+      background: #7a5a28;
+      border: 3px solid #3a2808;
+      border-radius: 4px;
+      padding: 0;
+      box-shadow: 3px 4px 14px rgba(0,0,0,0.7), inset 0 0 0 2px rgba(255,220,140,0.06);
+      flex: 1;
+      min-width: 200px;
+      max-width: 270px;
+      position: relative;
+    }
+    /* Cork grain texture via repeating lines */
+    .ts-board::before {
+      content: '';
       position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      /* Ensure title screen is thumb-friendly on mobile */
-      padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0)
-               env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+      inset: 0;
+      border-radius: 2px;
+      background: repeating-linear-gradient(
+        172deg,
+        transparent,
+        transparent 6px,
+        rgba(120,80,20,0.13) 6px,
+        rgba(120,80,20,0.13) 7px
+      );
+      pointer-events: none;
+    }
+    .ts-board-inner {
+      position: relative;
+      padding: 14px 12px 16px;
+      z-index: 1;
+    }
+    /* Board label tape strip at top */
+    .ts-board-label {
+      display: block;
+      background: #1a1208;
+      color: #a08040;
+      font-family: monospace;
+      font-size: 0.62rem;
+      letter-spacing: 0.14em;
+      text-align: center;
+      padding: 4px 0 3px;
+      border-bottom: 2px solid #3a2808;
+      position: relative;
+      z-index: 2;
+    }
+    /* Pinned note card style */
+    .ts-note {
+      background: #ede0c0;
+      border: 1px solid #b09060;
+      border-radius: 2px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      position: relative;
+      font-family: 'Georgia', serif;
+      color: #2a1808;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      box-shadow: 1px 2px 6px rgba(0,0,0,0.4);
+    }
+    /* Red thumbtack on notes */
+    .ts-note::before {
+      content: '';
+      width: 8px; height: 8px;
+      background: #cc2020;
+      border-radius: 50%;
+      border: 1px solid #8a0000;
+      position: absolute;
+      top: -5px; left: 50%; transform: translateX(-50%);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+    }
+    /* Map card */
+    .ts-map-card {
+      background: #e8dfc8;
+      border: 2px solid #a09060;
+      border-radius: 2px;
+      padding: 10px 8px 8px;
+      cursor: pointer;
+      position: relative;
+      text-align: center;
+      transition: border-color 0.15s;
+      box-shadow: 1px 2px 5px rgba(0,0,0,0.35);
+      margin-bottom: 4px;
+      user-select: none;
+    }
+    .ts-map-card:hover { border-color: #e8c97a; }
+    .ts-map-card.selected {
+      border-color: #e8c97a;
+      background: #f0e8cc;
+      box-shadow: 0 0 0 2px #c8a040, 1px 2px 5px rgba(0,0,0,0.35);
+    }
+    .ts-map-card-name {
+      font-family: monospace;
+      font-size: 0.72rem;
+      font-weight: bold;
+      color: #3a2808;
+      letter-spacing: 0.05em;
+      margin-top: 4px;
+    }
+    .ts-map-card-sub {
+      font-family: monospace;
+      font-size: 0.6rem;
+      color: #7a6040;
+      margin-top: 2px;
+    }
+    /* Selected tack indicator */
+    .ts-map-card .sel-tack {
+      display: none;
+      position: absolute;
+      top: -6px; right: 8px;
+      width: 10px; height: 10px;
+      background: #e8c030;
+      border: 1.5px solid #a08000;
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+    }
+    .ts-map-card.selected .sel-tack { display: block; }
+    .ts-map-card .sel-check {
+      display: none;
+      font-size: 0.6rem;
+      color: #806000;
+      font-family: monospace;
+      margin-top: 3px;
+    }
+    .ts-map-card.selected .sel-check { display: block; }
+    /* Map thumbnail placeholder */
+    .ts-map-thumb {
+      width: 100%;
+      height: 72px;
+      background: #1a1612;
+      border: 1px solid #6a5030;
+      border-radius: 1px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: monospace;
+      font-size: 0.55rem;
+      color: #5a4828;
+      letter-spacing: 0.08em;
+      position: relative;
+      overflow: hidden;
+    }
+    /* Simple house silhouette in thumb via CSS */
+    .ts-map-thumb::after {
+      content: '⌂';
+      font-size: 2rem;
+      color: #3a2c18;
+      position: absolute;
+    }
+    /* Shop slot row */
+    .ts-shop-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 2px;
+    }
+    .ts-shop-slot {
+      width: 36px; height: 36px;
+      background: #1a1208;
+      border: 1px solid #4a3818;
+      border-radius: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.55rem;
+      color: #3a2808;
+      font-family: monospace;
+      letter-spacing: 0.04em;
+      text-align: center;
+      line-height: 1.2;
+    }
+    /* XP bar */
+    .ts-xp-bar-wrap {
+      background: #1a1208;
+      border: 1px solid #4a3818;
+      border-radius: 2px;
+      height: 10px;
+      margin: 4px 0 6px;
+      overflow: hidden;
+    }
+    .ts-xp-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #806020, #e8c030);
+      width: 0%;
+      transition: width 0.4s;
+    }
+    /* Start button */
+    #startBtn {
+      display: block;
+      width: 100%;
+      background: #1a2010;
+      color: #80d040;
+      border: 2px solid #60a030;
+      border-radius: 3px;
+      padding: 10px 0;
+      font-size: 0.88rem;
+      font-family: monospace;
+      cursor: pointer;
+      letter-spacing: 0.16em;
+      font-weight: bold;
+      margin-top: 10px;
+      min-height: 44px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      transition: background 0.12s, border-color 0.12s;
+    }
+    #startBtn:hover {
+      background: #223018;
+      border-color: #90d050;
+    }
+    #titleHints {
+      font-family: monospace;
+      font-size: 0.6rem;
+      color: #5a4828;
+      text-align: center;
+      margin-top: 6px;
+      letter-spacing: 0.05em;
     }
     #landscapePrompt {
       display: none;
@@ -49,18 +300,93 @@
     <div>&#x1F4F1; Rotate your device<br>to landscape mode<br><span style="font-size:0.9rem;color:#aaa;">for the best experience</span></div>
   </div>
 
-  <!-- Title Screen -->
-  <div id="titleScreen" style="color:#e8c97a; text-align:center; font-family:monospace;">
-    <h1 style="font-size:3rem; margin-bottom:0.5rem;">HAUNTED</h1>
-    <p style="margin-bottom:0.5rem; color:#aaa;">Investigate the house. Identify the ghost.</p>
-    <p style="margin-bottom:0.5rem; color:#aaa;">Identify the ghost. Escape.</p>
-    <p id="titleHints" style="margin-bottom:2rem; color:#555; font-size:0.85rem;">Move: WASD or Arrow Keys &nbsp;|&nbsp; Interact: E &nbsp;|&nbsp; Quit round: ESC</p>
-    <button id="startBtn" style="
-      background:#1a1a2e; color:#e8c97a; border:2px solid #e8c97a;
-      padding:0.75rem 2rem; font-size:1.1rem; font-family:monospace;
-      cursor:pointer; letter-spacing:0.1em; min-width:160px; min-height:52px;
-    ">START</button>
-  </div>
+  <!-- Title Screen — Corkboard Layout -->
+  <div id="titleScreen">
+
+    <!-- Header -->
+    <div class="ts-header">
+      <h1>HAUNTED</h1>
+      <p>Investigate &nbsp;·&nbsp; Identify &nbsp;·&nbsp; Escape</p>
+    </div>
+
+    <!-- Three corkboard panels -->
+    <div class="ts-boards">
+
+      <!-- BOARD 1: MAP SELECTION -->
+      <div class="ts-board" id="board-map">
+        <span class="ts-board-label">MAP SELECTION</span>
+        <div class="ts-board-inner">
+          <div class="ts-note">
+            Choose your investigation site.<br>
+            <span style="font-size:0.68rem; color:#7a6040;">One location available.</span>
+          </div>
+          <!-- Map card — clicking selects it -->
+          <div class="ts-map-card selected" id="mapCard-0" onclick="selectMap(0)">
+            <span class="sel-tack"></span>
+            <div class="ts-map-thumb"></div>
+            <div class="ts-map-card-name">THE FARMHOUSE</div>
+            <div class="ts-map-card-sub">Medium &nbsp;·&nbsp; 12 rooms</div>
+            <div class="sel-check">▶ SELECTED</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BOARD 2: TRUCK LOADOUT / SHOP -->
+      <div class="ts-board" id="board-shop">
+        <span class="ts-board-label">TRUCK LOADOUT</span>
+        <div class="ts-board-inner">
+          <div class="ts-note">
+            Configure your equipment.<br>
+            <span style="font-size:0.68rem; color:#7a6040;">Shop coming soon.</span>
+          </div>
+          <!-- Placeholder equipment slots -->
+          <div style="font-family:monospace; font-size:0.6rem; color:#7a6040; margin-bottom:6px; letter-spacing:0.05em;">LOADOUT SLOTS</div>
+          <div class="ts-shop-row">
+            <div class="ts-shop-slot">EMF<br>Meter</div>
+            <div class="ts-shop-slot">UV<br>Light</div>
+            <div class="ts-shop-slot">Spirit<br>Box</div>
+            <div class="ts-shop-slot">Flash<br>light</div>
+            <div class="ts-shop-slot">Video<br>Cam</div>
+            <div class="ts-shop-slot">Thermo<br>meter</div>
+          </div>
+          <div style="font-family:monospace; font-size:0.56rem; color:#4a3818; margin-top:10px; text-align:center; letter-spacing:0.06em;">— SHOP UNLOCKS IN FUTURE UPDATE —</div>
+        </div>
+      </div>
+
+      <!-- BOARD 3: PROFILE / XP / START -->
+      <div class="ts-board" id="board-profile">
+        <span class="ts-board-label">INVESTIGATOR</span>
+        <div class="ts-board-inner">
+          <div class="ts-note">
+            <span style="font-family:monospace; font-size:0.7rem; font-weight:bold; color:#3a2808;">AGENT #0001</span><br>
+            <span style="font-size:0.68rem; color:#7a6040;">Rank: Rookie</span>
+          </div>
+          <!-- XP -->
+          <div style="font-family:monospace; font-size:0.6rem; color:#7a6040; letter-spacing:0.06em;">XP — LEVEL 1</div>
+          <div class="ts-xp-bar-wrap"><div class="ts-xp-bar" id="xpBar" style="width:8%;"></div></div>
+          <div style="font-family:monospace; font-size:0.56rem; color:#4a3818; margin-bottom:8px; letter-spacing:0.04em;">40 / 500 XP &nbsp;·&nbsp; 0 investigations</div>
+          <!-- Start -->
+          <button id="startBtn">BEGIN INVESTIGATION</button>
+          <p id="titleHints">Move: WASD &nbsp;|&nbsp; Interact: E &nbsp;|&nbsp; Journal: J &nbsp;|&nbsp; ESC: quit round</p>
+        </div>
+      </div>
+
+    </div><!-- /ts-boards -->
+
+  </div><!-- /titleScreen -->
+
+  <script>
+    // Map selection state — one map for now, always pre-selected
+    let _selectedMapId = 0;
+    function selectMap(id) {
+      _selectedMapId = id;
+      document.querySelectorAll('.ts-map-card').forEach(el => el.classList.remove('selected'));
+      const card = document.getElementById('mapCard-' + id);
+      if (card) card.classList.add('selected');
+    }
+    // Pre-select map 0 on load
+    selectMap(0);
+  </script>
 
   <canvas id="gameCanvas" style="display:none;"></canvas>
 
@@ -250,10 +576,57 @@
     let _ouijaMenuRects = [];      // [{id, rect}] rebuilt each draw frame for click hit-test
 
     // ── Voodoo Doll state ─────────────────────────────────────────────────
-    const VOODOO_TOTAL_PINS = 10; // total pins (last one is the heart pin)
-    let voodooPinsLeft  = VOODOO_TOTAL_PINS; // pins remaining this round
-    let voodooSpent     = false;             // true when all pins used
-    let voodooCooldown  = 0;                 // seconds until next pin can be pushed (anti-spam)
+    // ── Voodoo Doll — 5 named pins, each used once ───────────────────────
+    // px/py: doll-local offset from doll pivot (waist) used for popup pin spot positions
+    const VOODOO_PINS = [
+      { id:0, name:"Head",           effect:"sanity",   px:  0, py:-55 },
+      { id:1, name:"Heart",          effect:"hunt",     px:  0, py: -8 },
+      { id:2, name:"Left Shoulder",  effect:"appear",   px:-36, py:-21 },
+      { id:3, name:"Right Shoulder", effect:"appear",   px: 36, py:-21 },
+      { id:4, name:"Body",           effect:"evidence", px:  0, py: 20 },
+    ];
+    let voodooPinUsed    = [false,false,false,false,false]; // which pins are spent
+    let voodooDollOpen   = false;   // popup open/closed
+    let voodooAnimPinId  = -1;      // pin currently animating (-1 = none)
+    let voodooAnimT      = 0;       // 0→1 plunge progress over 0.6s
+    let voodooEffectFired = false;  // true once effect fired for current anim
+    let voodooPostT      = 0;       // countdown after effect before popup closes
+    let voodooSpent      = false;   // all 5 pins used
+    let ghostAppearTimer = 0;       // > 0: show ghost in gray translucent form in world
+    let ghostHuntFlash   = 0;       // > 0: red hunt-flash screen overlay fading from 1.5→0
+    let playerSanity     = 100;     // 0–100; head pin reduces by 25
+    let _voodooPinRects  = [];      // rebuilt each frame for click detection
+    // ── Music Box state ───────────────────────────────────────────────────
+    const MUSIC_BOX_HUNT_DELAY = 1.5; // seconds until hunt triggers after activation
+    let musicBoxActive  = false; // true while melody is playing
+    let musicBoxTimer   = 0;     // seconds elapsed since activation
+    let musicBoxBroken  = false; // spent after hunt fires — cannot reuse this round
+    let musicBoxPulseT  = 0;     // 0→1 repeating pulse for visual ring animation
+
+    // ── Tarot Cards state ─────────────────────────────────────────────────
+    const TAROT_DECK_SIZE = 10; // total cards per round
+    // Card definitions: id, effect key, art theme tag (art drawn procedurally by id)
+    const TAROT_CARDS = [
+      { id:0, name:"The Spire",    effect:"activity"  },
+      { id:1, name:"Fate's Turn",  effect:"fate"      },
+      { id:2, name:"The Trickster",effect:"trickster" },
+      { id:3, name:"The Fiend",    effect:"event"     },
+      { id:4, name:"The Reaper",   effect:"hunt"      },
+      { id:5, name:"The Watcher",  effect:"watcher"   },
+      { id:6, name:"The Dawn",     effect:"dawn"      },
+      { id:7, name:"The Eclipse",  effect:"eclipse"   },
+      { id:8, name:"The Saint",    effect:"saint"     },
+      { id:9, name:"The Noose",    effect:"death"     },
+    ];
+    let tarotOpen       = false;  // popup open/closed
+    let tarotDeck       = [];     // remaining card ids (shuffled at round start)
+    let tarotDrawnCard  = null;   // card object currently shown (null = none)
+    let tarotRevealT    = 0;      // 0→1 flip-reveal animation
+    let tarotBurnT      = 0;      // 0→1 disintegration animation (starts after reveal)
+    let tarotBurning    = false;  // true once burning starts
+    let tarotEffectFired= false;  // true once effect applied for current card
+    let tarotSpent      = false;  // true when all 10 cards used
+
     let mirrorActiveTimer  = 0;    // countdown while mirror is in active use
     let mirrorBroken       = false; // true once mirror shatters
     let _mirrorCanvas = null, _mirrorFogCanvas = null; // offscreen render targets for ghost-POV feed
@@ -331,6 +704,7 @@
     loadControls(); // load saved controls immediately before any input listeners attach
 
     let rebindingAction = null; // action name waiting for a new key press, or null
+    let journalKeybindScrollY = 0; // scroll offset for keybind list on Options tab
     // Item display colors used in HUD and player hand visual
     // ─── Master item registry ────────────────────────────────────────────────
     // Single source of truth for every item in the game.
@@ -423,7 +797,6 @@
       gameRunning = false;
       canvas.style.display = "none";
       document.getElementById("titleScreen").style.display = "block";
-      // Reset player to van
       player.x = 240;
       player.y = 918;
     }
@@ -445,7 +818,14 @@
       ouijaSeq = []; ouijaSeqIdx = -1; ouijaSeqNextTime = 0;
       ouijaPendingBreak = false; ouijaLastAnswer = ""; ouijaCurrentQ = "";
       ouijaAskedQIds = new Set(); _ouijaMenuRects = [];
-      voodooPinsLeft = VOODOO_TOTAL_PINS; voodooSpent = false; voodooCooldown = 0;
+      voodooPinUsed = [false,false,false,false,false]; voodooDollOpen = false;
+      voodooAnimPinId = -1; voodooAnimT = 0; voodooEffectFired = false; voodooPostT = 0;
+      voodooSpent = false; ghostAppearTimer = 0; ghostHuntFlash = 0; playerSanity = 100;
+      musicBoxActive = false; musicBoxTimer = 0; musicBoxBroken = false; musicBoxPulseT = 0;
+      // Build shuffled tarot deck
+      tarotOpen = false; tarotDrawnCard = null; tarotRevealT = 0; tarotBurnT = 0;
+      tarotBurning = false; tarotEffectFired = false; tarotSpent = false;
+      tarotDeck = [...Array(TAROT_DECK_SIZE).keys()].sort(() => Math.random() - 0.5);
       mirrorActiveTimer = 0;
       mirrorBroken      = false;
       lostRound      = false;
@@ -457,12 +837,12 @@
       selectedSlot = 0;
       flashlightOn = false;
       worldItems      = [];
-      // TESTING: Voodoo Doll always spawns. Remove the forced spawn below to return to normal.
-      const _voodooItem = ITEMS.find(it => it.name === "Voodoo Doll");
-      worldItems.push({ name: _voodooItem.name, x: _voodooItem.spawnX, y: _voodooItem.spawnY,
+      // TESTING: Tarot Cards always spawn. One additional random cursed from the rest of the pool.
+      const _tarotItem = ITEMS.find(it => it.name === "Tarot Cards");
+      worldItems.push({ name: _tarotItem.name, x: _tarotItem.spawnX, y: _tarotItem.spawnY,
                         facing: 0, active: false, written: false, writeAnimTimer: 0 });
-      // One random cursed object from the remaining pool (excludes Voodoo Doll to avoid duplicate)
-      const cursedPool = ITEMS.filter(it => it.category === "cursed" && it.name !== "Voodoo Doll");
+      // One random cursed object from the remaining pool (excludes Tarot Cards to avoid duplicate)
+      const cursedPool = ITEMS.filter(it => it.category === "cursed" && it.name !== "Tarot Cards");
       const cursedPick = cursedPool[Math.floor(Math.random() * cursedPool.length)];
       const isCircle   = cursedPick.name === "Summoning Circle";
       worldItems.push({ name: cursedPick.name, x: cursedPick.spawnX, y: cursedPick.spawnY,
@@ -495,9 +875,9 @@
 
     // --- Start Button ---
     document.getElementById("startBtn").addEventListener("click", () => {
-      envModeIdx = Math.floor(Math.random() * envModes.length); // pick random weather each round
-      showGame();    // reset all state first (including ghostOrbs = [])
-      pickGhost();   // then spawn ghost + orbs AFTER reset, so they survive into the round
+      envModeIdx = Math.floor(Math.random() * envModes.length);
+      showGame();
+      pickGhost();
       if (!loopRunning) { loopRunning = true; loop(); }
     });
 
@@ -592,10 +972,9 @@
         else nearD.open = !nearD.open;
       }
 
-      // Van door — within 44px AND facing
+      // Van door — within 44px AND facing (allowed in lobby too — van is open/enterable)
       if (_isFacing(360, 926, 44)) vanDoor.open = !vanDoor.open;
 
-      // Van fixed interactables — each within its reach radius AND facing
       if (_isFacing(347, 900, 28)) { keypadOpen = true; return; }
       if (_isFacing(270, 950, 40)) { equipmentOpen = true; pegScrollX = 0; return; }
       if (_isFacing(196, 926, 32)) {
@@ -676,7 +1055,7 @@
       // ── Van rear door — pointer hit + reach + facing ──────────────────────
       if (_ph(360, 926, 44) && _pp(360, 926, 56) && _pf(360, 926, 56)) { vanDoor.open = !vanDoor.open; return; }
 
-      // ── Van fixed interactables — pointer hit + reach + facing ────────────
+      // ── Van fixed interactables ──────────────────────────────────────────
       if (_ph(196, 926, 38) && _pp(196, 926, 42) && _pf(196, 926, 42)) {
         cameraViewMode = true;
         const cams = getPlacedCameras();
@@ -707,6 +1086,35 @@
         rebindingAction = null;
         e.preventDefault();
         return;
+      }
+      // Tarot Cards: E draws one card while popup is open and no card is animating
+      if (tarotOpen && tarotDrawnCard === null && gameRunning) {
+        if (e.key.toLowerCase() === keybinds.interact) {
+          e.preventDefault();
+          if (tarotDeck.length > 0) {
+            const cardId = tarotDeck.pop();
+            tarotDrawnCard  = TAROT_CARDS[cardId % TAROT_CARDS.length];
+            tarotRevealT    = 0;
+            tarotBurnT      = 0;
+            tarotBurning    = false;
+            tarotEffectFired= false;
+            if (tarotDeck.length === 0) tarotSpent = true;
+          }
+          return;
+        }
+      }
+
+      // Voodoo Doll: E pushes a random unused pin while popup is open and idle
+      if (voodooDollOpen && voodooAnimPinId === -1 && gameRunning) {
+        if (e.key.toLowerCase() === keybinds.interact) {
+          e.preventDefault();
+          const avail = VOODOO_PINS.filter((p, i) => !voodooPinUsed[i]);
+          if (avail.length > 0) {
+            const pick = avail[Math.floor(Math.random() * avail.length)];
+            _startVoodooPinAnim(pick.id);
+          }
+          return;
+        }
       }
       // Ouija board: 1–5 selects a question while the popup is open and idle
       if (ouijaBoardOpen && !ouijaBroken && ouijaSeqIdx === -1 && gameRunning) {
@@ -743,6 +1151,13 @@
                              : name === "UV Flashlight" ? uvFlashlightOn
                              : name === "Ghost Book"    ? false   // drop = always closed/inactive
                              : heldItemOn;
+          // Spent tarot cards vanish rather than dropping to the floor
+          if (name === "Tarot Cards" && tarotSpent) {
+            inventory.splice(selectedSlot, 1);
+            if (selectedSlot >= inventory.length) selectedSlot = Math.max(0, inventory.length - 1);
+            heldItemOn = false; heldItemUsing = false;
+            return;
+          }
           const newItem = { name, x: px, y: py, facing: playerAngle, active: placedActive };
           if (name === "Ghost Book") { newItem.written = false; newItem.writeAnimTimer = 0; }
           if (name === "Tripod") { newItem.mountedCamera = null; }
@@ -784,8 +1199,15 @@
             spiritBoxListenTimer = 2.5;
             spiritBoxNoResponse  = false;
             spiritBoxTimer       = 0; // clear old response so new attempt is fresh
+          } else if (held === "Tarot Cards" && !tarotSpent) {
+            tarotOpen = !tarotOpen;
+          } else if (held === "Music Box" && !musicBoxBroken && !musicBoxActive) {
+            musicBoxActive = true;
+            musicBoxTimer  = 0;
+            musicBoxPulseT = 0;
           } else if (held === "Voodoo Doll" && !voodooSpent) {
-            _triggerVoodooPinEvent(); // push one pin
+            if (voodooDollOpen) { voodooDollOpen = false; } // R exits popup
+            else { voodooDollOpen = true; }                 // R opens popup
           } else if (held === "Ouija Board" && !ouijaBroken) {
             ouijaBoardOpen = !ouijaBoardOpen; // R toggles popup; questions chosen by 1-5 / click
           } else if (held === "Haunted Mirror") {
@@ -848,6 +1270,8 @@
         if (dangerTimerOpen)    { dangerTimerOpen = false; return; }
         if (fourPanelOpen)      { fourPanelOpen = false; return; }
         if (corkBoardOpen)      { corkBoardOpen = false; return; }
+        if (tarotOpen)          { tarotOpen = false; return; }
+        if (voodooDollOpen)     { voodooDollOpen = false; return; }
         if (ouijaBoardOpen)     { ouijaBoardOpen = false; return; }
         if (hauntedMirrorOpen)  { hauntedMirrorOpen = false; return; }
         if (journalOpen)        { journalOpen = false; return; }
@@ -1190,6 +1614,7 @@
       if (!vanDoor.open &&
           nx + player.width > 356 && nx < 364 &&
           ny + player.height > 886 && ny < 966) return false;
+
       // Block closed doors
       for (const door of doors) {
         if (!door.open &&
@@ -2107,9 +2532,10 @@
         if (e.target === canvas) return; // canvas handles its own panel logic
         if (!gameRunning) return;
         if (journalOpen || equipmentOpen || keypadOpen ||
-            dangerTimerOpen || fourPanelOpen || corkBoardOpen) {
+            dangerTimerOpen || fourPanelOpen || corkBoardOpen || voodooDollOpen) {
           journalOpen = false; equipmentOpen = false; keypadOpen = false;
-          dangerTimerOpen = false; fourPanelOpen = false; corkBoardOpen = false; hauntedMirrorOpen = false;
+          dangerTimerOpen = false; fourPanelOpen = false; corkBoardOpen = false;
+          hauntedMirrorOpen = false; voodooDollOpen = false; tarotOpen = false;
         }
       }, { passive: true });
 
@@ -2138,8 +2564,73 @@
         }
       }
 
-      // Voodoo Doll cooldown tick
-      if (voodooCooldown > 0) voodooCooldown -= delta;
+      // Voodoo Doll animation + timers
+      if (voodooAnimPinId >= 0) {
+        if (!voodooEffectFired) {
+          voodooAnimT = Math.min(1, voodooAnimT + delta / 0.6); // 0.6s plunge
+          if (voodooAnimT >= 1) {
+            _fireVoodooPinEffect(voodooAnimPinId);
+            voodooEffectFired = true;
+            voodooPostT = 0.9; // show effect label for 0.9s then close
+          }
+        } else {
+          voodooPostT -= delta;
+          if (voodooPostT <= 0) {
+            voodooDollOpen  = false;
+            voodooAnimPinId = -1;
+            voodooAnimT     = 0;
+            voodooEffectFired = false;
+          }
+        }
+      }
+      if (ghostAppearTimer > 0) ghostAppearTimer -= delta;
+      if (ghostHuntFlash   > 0) ghostHuntFlash   -= delta;
+
+      // ── Tarot Cards update ──────────────────────────────────────────────
+      if (tarotDrawnCard !== null) {
+        if (!tarotBurning) {
+          tarotRevealT = Math.min(1, tarotRevealT + delta / 0.5); // 0.5s flip
+          if (tarotRevealT >= 1 && !tarotEffectFired) {
+            _applyTarotEffect(tarotDrawnCard.effect);
+            tarotEffectFired = true;
+            tarotBurning = true; // start burn after effect fires
+          }
+        } else {
+          tarotBurnT = Math.min(1, tarotBurnT + delta / 1.2); // 1.2s burn
+          if (tarotBurnT >= 1) {
+            tarotDrawnCard = null; // card consumed, ready for next draw
+            tarotBurnT = 0;
+            if (tarotDeck.length === 0) {
+              tarotOpen = false; // auto-close
+              // Remove Tarot Cards from inventory — deck is fully spent, no floor drop
+              const tidx = inventory.indexOf("Tarot Cards");
+              if (tidx >= 0) {
+                inventory.splice(tidx, 1);
+                if (selectedSlot >= inventory.length) selectedSlot = Math.max(0, inventory.length - 1);
+              }
+            }
+          }
+        }
+      }
+
+      // ── Music Box update ────────────────────────────────────────────────
+      if (musicBoxActive) {
+        musicBoxTimer  += delta;
+        musicBoxPulseT  = (musicBoxPulseT + delta * 2.5) % 1; // pulse speed: 2.5 cycles/sec
+        if (musicBoxTimer >= MUSIC_BOX_HUNT_DELAY) {
+          // Trigger hunt and shatter the box
+          _breakMusicBox();
+          ghostHuntFlash  = 1.5;
+          ghostAppearTimer = 3.0;
+          // Move ghost toward player room for the hunt
+          const pRoom = _roomAtPoint(player.x + 8, player.y + 8);
+          if (pRoom && currentGhost) {
+            ghostX = pRoom.x + pRoom.w * 0.5 + (Math.random() - 0.5) * pRoom.w * 0.4;
+            ghostY = pRoom.y + pRoom.h * 0.5 + (Math.random() - 0.5) * pRoom.h * 0.4;
+          }
+          emfSources.push({ x: ghostX, y: ghostY, level: 5, timer: 16 });
+        }
+      }
 
 
       let dx = 0, dy = 0;
@@ -2444,10 +2935,12 @@
         }
       }
       const spd = player.speed * (isSprinting ? 1.3 : 1.0);
-      if (keys[keybinds.left]  || keys["ArrowLeft"])  dx = -spd;
-      if (keys[keybinds.right] || keys["ArrowRight"]) dx =  spd;
-      if (keys[keybinds.up]    || keys["ArrowUp"])    dy = -spd;
-      if (keys[keybinds.down]  || keys["ArrowDown"])  dy =  spd;
+      if (!tarotOpen) { // block movement while tarot popup is open
+        if (keys[keybinds.left]  || keys["ArrowLeft"])  dx = -spd;
+        if (keys[keybinds.right] || keys["ArrowRight"]) dx =  spd;
+        if (keys[keybinds.up]    || keys["ArrowUp"])    dy = -spd;
+        if (keys[keybinds.down]  || keys["ArrowDown"])  dy =  spd;
+      }
 
       // Mobile joystick: face joystick direction + walk forward in that direction.
       // Angle and magnitude are computed here so they're available for the facing update below.
@@ -3709,6 +4202,27 @@
             ctx.fillText(si === 0 ? "YE" : "OUI", 5, 5); ctx.textAlign = "left";
           }
 
+        } else if (it.style === "music_box_shard") {
+          // Broken Music Box piece — splintered purple-lacquered wood with metal trim
+          const si = it.shardIndex ?? 0;
+          ctx.fillStyle = "rgba(0,0,0,0.3)"; // shadow
+          if (si === 0) {
+            // Larger lid piece — rectangular with ragged right edge
+            ctx.beginPath(); ctx.moveTo(2,1); ctx.lineTo(14,0); ctx.lineTo(11,8); ctx.lineTo(-1,7); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#3a1848"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(13,-1); ctx.lineTo(10,7); ctx.lineTo(-2,6); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#6a3080"; ctx.beginPath(); ctx.moveTo(1,1); ctx.lineTo(11,0); ctx.lineTo(9,5); ctx.lineTo(0,5); ctx.closePath(); ctx.fill();
+            // gold key fragment
+            ctx.fillStyle = "rgba(220,180,40,0.7)"; ctx.fillRect(10,1,3,2);
+            ctx.fillStyle = "rgba(240,200,60,0.9)"; ctx.beginPath(); ctx.arc(12,2,1.5,0,Math.PI*2); ctx.fill();
+          } else {
+            // Smaller base piece — squarish fragment
+            ctx.beginPath(); ctx.moveTo(2,1); ctx.lineTo(10,2); ctx.lineTo(8,10); ctx.lineTo(-1,8); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#3a1848"; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(9,1); ctx.lineTo(7,9); ctx.lineTo(-2,7); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = "#6a3080"; ctx.beginPath(); ctx.moveTo(1,1); ctx.lineTo(7,2); ctx.lineTo(5,7); ctx.lineTo(0,6); ctx.closePath(); ctx.fill();
+            // felt interior fragment
+            ctx.fillStyle = "rgba(220,200,180,0.5)"; ctx.fillRect(1,2,5,3);
+          }
+
         } else if (it.name === "Ouija Board") {
           // Flat rectangular board with lettering hint
           ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fillRect(-10,-7,22,14);
@@ -3737,18 +4251,18 @@
           ctx.beginPath(); ctx.moveTo(0,-11); ctx.lineTo(-1,-10); ctx.stroke();
           ctx.beginPath(); ctx.moveTo(2,-11); ctx.lineTo(3,-10); ctx.stroke();
           ctx.beginPath(); ctx.moveTo(3,-11); ctx.lineTo(2,-10); ctx.stroke();
-          // Show remaining pins as small silver needles stuck in the body
-          const _pinsToShow = Math.min(voodooPinsLeft, 5); // show up to 5 at a time
-          for (let _pi = 0; _pi < _pinsToShow; _pi++) {
+          // Show used pins as small silver needles already stuck in body
+          voodooPinUsed.forEach((used, _pi) => {
+            if (!used) return;
             const _px = -2 + _pi * 2.2;
             const _py = -5 + (_pi % 2) * 2;
             ctx.strokeStyle = "#c8c8c8"; ctx.lineWidth = 0.8;
             ctx.beginPath(); ctx.moveTo(_px, _py); ctx.lineTo(_px + 3, _py - 3); ctx.stroke();
             ctx.fillStyle = "#e8e8e8"; ctx.beginPath(); ctx.arc(_px + 3, _py - 3, 1, 0, Math.PI*2); ctx.fill();
-          }
-          // Heart on chest if heart pin still available (last pin)
+          });
+          // Heart on chest — red if available, dark if spent
           if (!_spent) {
-            ctx.fillStyle = voodooPinsLeft === 1 ? "#e02020" : "rgba(200,40,40,0.5)";
+            ctx.fillStyle = voodooPinUsed[1] ? "#3a0808" : "rgba(200,40,40,0.7)";
             ctx.font = "5px serif"; ctx.textAlign = "center";
             ctx.fillText("♥", 1, -1);
             ctx.textAlign = "left";
@@ -4410,6 +4924,29 @@
 
           ctx.restore();
         }
+      }
+
+      // --- Voodoo Doll ghost appearance (shoulder/hunt pins) ---
+      // Gray translucent ghost visible at its current location for ghostAppearTimer seconds.
+      if (currentGhost && ghostAppearTimer > 0) {
+        const alpha = Math.min(1, ghostAppearTimer) * 0.65;
+        const gLeg = (ghostPauseTimer <= 0) ? Math.sin(ghostWalkCycle * 1.8) * 4 : 0;
+        const gArm = (ghostPauseTimer <= 0) ? -Math.sin(ghostWalkCycle * 1.8) * 3 : 0;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.translate(ghostX, ghostY);
+        ctx.rotate(ghostMoveAngle - Math.PI / 2);
+        ctx.fillStyle = "rgba(180,180,180,0.12)";
+        ctx.beginPath(); ctx.ellipse(1, 2, 9, 5, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#707070"; ctx.fillRect(-4, 3+gLeg, 3, 6); ctx.fillRect(1, 3-gLeg, 3, 6);
+        ctx.fillStyle = "#888";    ctx.fillRect(-8, -1+gArm, 3, 6); ctx.fillRect(5, -2-gArm, 3, 6);
+        ctx.fillStyle = "#999";    ctx.fillRect(-5, -5, 10, 9);
+        ctx.fillStyle = "#bbb";
+        ctx.beginPath(); ctx.ellipse(0, -8, 4.5, 4, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = "#444";
+        ctx.beginPath(); ctx.ellipse(-1.5, -8.5, 2.0, 1.5, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse( 1.5, -8.5, 2.0, 1.5, 0, 0, Math.PI*2); ctx.fill();
+        ctx.restore();
       }
 
       // --- Summoning Circle ghost manifestation ---
@@ -5131,15 +5668,15 @@
           ctx.fillStyle = _vs ? "#4a3020" : "#7a5830"; ctx.fillRect(-3,-4,6,9);
           ctx.fillStyle = _vs ? "#5a4030" : "#8a6840"; ctx.fillRect(-5,-3,2,5); ctx.fillRect(3,-3,2,5);
           ctx.fillStyle = _vs ? "#4a3020" : "#7a5830"; ctx.fillRect(-2,5,2,5); ctx.fillRect(0,5,2,5);
-          if (!_vs && voodooPinsLeft > 0) {
+          const _pinsLeft = VOODOO_PINS.filter((p, i) => !voodooPinUsed[i]).length;
+          if (!_vs && _pinsLeft > 0) {
             ctx.strokeStyle = "#c8c8c8"; ctx.lineWidth=0.8;
             ctx.beginPath();ctx.moveTo(-1,-5);ctx.lineTo(2,1);ctx.stroke();
             ctx.fillStyle="#e8e8e8"; ctx.beginPath();ctx.arc(-1,-5,1,0,Math.PI*2);ctx.fill();
           }
-          // Pin counter label
-          ctx.fillStyle = _vs ? "#806050" : (voodooPinsLeft === 1 ? "#e05040" : "#c8a060");
+          ctx.fillStyle = _vs ? "#806050" : (_pinsLeft <= 1 ? "#e05040" : "#c8a060");
           ctx.font = "4px monospace"; ctx.textAlign = "center";
-          ctx.fillText(_vs ? "SPENT" : `${voodooPinsLeft}/${VOODOO_TOTAL_PINS}`, 0, 13);
+          ctx.fillText(_vs ? "SPENT" : `${_pinsLeft}/${VOODOO_PINS.length} pins`, 0, 13);
           ctx.textAlign = "left";
         } else if (heldForDisplay === "Haunted Mirror") {
           ctx.fillStyle = "#483020"; ctx.fillRect(-6,-9,12,17); // wood frame
@@ -5189,6 +5726,114 @@
         ctx.restore();
       }
 
+      // ── Sanity HUD — small indicator, top-left ─────────────────────────
+      if (playerSanity < 100) {
+        ctx.save();
+        const sanityColor = playerSanity > 60 ? "#8ad0a0" : playerSanity > 30 ? "#e0c060" : "#e06040";
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(10, 10, 90, 14);
+        ctx.fillStyle = sanityColor;
+        ctx.font = "9px monospace";
+        ctx.textAlign = "left";
+        ctx.fillText(`Sanity: ${playerSanity}%`, 14, 21);
+        ctx.restore();
+      }
+
+      // ── Music Box active overlay ───────────────────────────────────────
+      if (musicBoxActive && currentGhost) {
+        const W = canvas.width, H = canvas.height;
+        const cx = W / 2, cy = H / 2;
+
+        // Direction from player to ghost (screen-space via camera)
+        const _camX2 = Math.round(player.x + 8 - W / (2 * gameZoom));
+        const _camY2 = Math.round(player.y + 8 - H / (2 * gameZoom));
+        const gScrX = (ghostX - _camX2) * gameZoom;
+        const gScrY = (ghostY - _camY2) * gameZoom;
+        const angleToGhost = Math.atan2(gScrY - cy, gScrX - cx);
+
+        // Distance: world-space pixels → loudness/alpha
+        const distPx   = Math.hypot(ghostX - (player.x + 8), ghostY - (player.y + 8));
+        // TUNE: 40px = max loud, 400px = near-silent
+        const loudness = Math.max(0, Math.min(1, 1 - (distPx - 40) / 360));
+
+        // Pulsing ring at ghost world position — size/alpha from loudness + pulse
+        ctx.save();
+        ctx.translate(gScrX, gScrY);
+        const ringR = 18 + 14 * Math.sin(musicBoxPulseT * Math.PI);
+        ctx.globalAlpha = loudness * (0.35 + 0.35 * Math.sin(musicBoxPulseT * Math.PI));
+        ctx.strokeStyle = "#e0a0ff";
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, ringR, 0, Math.PI * 2); ctx.stroke();
+        // "♪" singing note drifting upward
+        const noteOff = -20 - 12 * musicBoxPulseT;
+        ctx.globalAlpha = loudness * Math.max(0, 1 - musicBoxPulseT);
+        ctx.fillStyle = "#e0a0ff";
+        ctx.font = "bold 14px serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        ctx.fillText("♪", 0, noteOff);
+        ctx.restore();
+
+        // Direction compass arrow (screen edge) — always visible regardless of distance
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(angleToGhost);
+        const arrowDist = Math.min(cx, cy) - 28; // keep inside canvas
+        const arrowAlpha = 0.55 + 0.3 * Math.sin(musicBoxPulseT * Math.PI * 2);
+        ctx.globalAlpha = arrowAlpha;
+        ctx.fillStyle = "#e0a0ff";
+        ctx.strokeStyle = "#7030a0";
+        ctx.lineWidth = 1;
+        // Arrow head pointing right (toward ghost angle)
+        ctx.beginPath();
+        ctx.moveTo(arrowDist + 12, 0);
+        ctx.lineTo(arrowDist,  -6);
+        ctx.lineTo(arrowDist + 3, 0);
+        ctx.lineTo(arrowDist,   6);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        // Shaft
+        ctx.globalAlpha = arrowAlpha * 0.7;
+        ctx.fillRect(arrowDist - 14, -1.5, 18, 3);
+        ctx.restore();
+
+        // Loudness label bottom-center
+        ctx.save();
+        const bars = Math.round(loudness * 5);
+        const barStr = "▮".repeat(bars) + "▯".repeat(5 - bars);
+        ctx.globalAlpha = 0.85;
+        ctx.font = "bold 11px monospace"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        ctx.fillStyle = "#2a0040";
+        ctx.fillText(`♫  ${barStr}  ♫`, W / 2 + 1, H - 17);
+        ctx.fillStyle = "#e0a0ff";
+        ctx.fillText(`♫  ${barStr}  ♫`, W / 2, H - 18);
+        // Countdown bar above the loudness label
+        const pct = musicBoxTimer / MUSIC_BOX_HUNT_DELAY;
+        const bw = 120, bh = 5, bx2 = W / 2 - bw / 2, by2 = H - 30;
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = "#2a0040"; ctx.fillRect(bx2, by2, bw, bh);
+        ctx.fillStyle = pct > 0.8 ? "#ff4040" : "#e0a0ff";
+        ctx.fillRect(bx2, by2, bw * pct, bh);
+        ctx.restore();
+      }
+
+      // ── Hunt flash overlay ─────────────────────────────────────────────
+      if (ghostHuntFlash > 0) {
+        ctx.save();
+        const fa = Math.min(1, ghostHuntFlash / 1.5) * 0.45;
+        ctx.globalAlpha = fa;
+        ctx.fillStyle = "#cc0000";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        if (ghostHuntFlash > 0.9) {
+          ctx.globalAlpha = Math.min(1, (ghostHuntFlash - 0.9) / 0.6);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 32px serif";
+          ctx.textAlign = "center";
+          ctx.fillText("HUNT", canvas.width / 2, canvas.height / 2);
+          ctx.textAlign = "left";
+        }
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+
     }
 
     // --- Desktop mouse wheel: pegboard scroll or inventory cycle ---
@@ -5202,6 +5847,12 @@
           const virtualW = Math.ceil(equipmentList.length / 3) * 200 + 60;
           const maxScroll = Math.max(0, virtualW - 664);
           pegScrollX = Math.max(0, Math.min(maxScroll, pegScrollX + dir * 80));
+          return;
+        }
+
+        if (journalOpen && journalTab === 2) {
+          // Scroll the keybind list on the Options tab
+          journalKeybindScrollY = Math.max(0, journalKeybindScrollY + dir * 30);
           return;
         }
 
@@ -5223,6 +5874,9 @@
       const mx = (e.clientX - rect.left) * (canvas.width  / rect.width);
       const my = (e.clientY - rect.top)  * (canvas.height / rect.height);
 
+
+      // ── Voodoo Doll popup is open — eat all clicks (no pin selection by click) ──
+      if (voodooDollOpen) { return; }
       // ── Ouija board question menu click ───────────────────────────────────
       if (ouijaBoardOpen && !ouijaBroken && ouijaSeqIdx === -1) {
         for (const entry of _ouijaMenuRects) {
@@ -5290,7 +5944,7 @@
         if (my >= tabY && my <= jy) {
           if (mx >= lx + 10  && mx <= lx + 128)  { journalTab = 0; return; }
           if (mx >= lx + 140 && mx <= lx + 258)  { journalTab = 1; return; }
-          if (mx >= lx + 270 && mx <= lx + 388)  { journalTab = 2; return; }
+          if (mx >= lx + 270 && mx <= lx + 388)  { journalTab = 2; journalKeybindScrollY = 0; return; }
         }
         // Evidence rows (tab 0, left page) — click row to cycle state
         if (journalTab === 0) {
@@ -5332,10 +5986,12 @@
             }
           }
           // ── Right page: keybind rows — shared for both platforms ──
-          const actions = ["up","down","left","right","sprint","interact","flashlight","journal","drop","inventory","use"];
-          actions.forEach((action, i) => {
-            const bry = jy + 70 + i * 30;
-            if (mx >= rx + 14 && mx <= rx + rw - 14 && my >= bry && my <= bry + 24) {
+          const _clickActions = ["up","down","left","right","sprint","interact","flashlight","journal","drop","place","inventory","use"];
+          const _listTop = jy + 62, _ROW_H = 26;
+          _clickActions.forEach((action, i) => {
+            const bry = _listTop + i * _ROW_H + 4 - journalKeybindScrollY;
+            if (mx >= rx + 14 && mx <= rx + rw - 14 && my >= _listTop && my <= _listTop + (jh - 62 - 22) &&
+                my >= bry && my <= bry + _ROW_H - 2) {
               rebindingAction = (rebindingAction === action) ? null : action;
             }
           });
@@ -6092,38 +6748,99 @@
         }
 
         // ── Right page: keybindings ──
+        // Rebindable entries (click to reassign)
         const actionDefs = [
-          { key:"up",         label:"Move Up"     },
-          { key:"down",       label:"Move Down"   },
-          { key:"left",       label:"Move Left"   },
-          { key:"right",      label:"Move Right"  },
-          { key:"sprint",     label:"Sprint"      },
-          { key:"interact",   label:"Interact"    },
-          { key:"flashlight", label:"Flashlight"  },
-          { key:"journal",    label:"Evid. Journal"},
-          { key:"drop",       label:"Drop Item"   },
-          { key:"place",      label:"Place Item"  },
-          { key:"inventory",  label:"Cycle Inv."  },
-          { key:"use",        label:"Use / Toggle"},
+          { key:"up",         label:"Move Up"       },
+          { key:"down",       label:"Move Down"     },
+          { key:"left",       label:"Move Left"     },
+          { key:"right",      label:"Move Right"    },
+          { key:"sprint",     label:"Sprint"        },
+          { key:"interact",   label:"Interact (E)"  },
+          { key:"flashlight", label:"Flashlight"    },
+          { key:"journal",    label:"Open Journal"  },
+          { key:"drop",       label:"Drop Item"     },
+          { key:"place",      label:"Place/Preview" },
+          { key:"inventory",  label:"Cycle Item"    },
+          { key:"use",        label:"Use / Toggle"  },
         ];
+        // Fixed (non-rebindable) entries shown below a divider
+        const fixedDefs = [
+          { fixedKey: "Q",         label:"Lighter / 4th Slot"  },
+          { fixedKey: "+ / -",     label:"Zoom In / Out"       },
+          { fixedKey: "N",         label:"Night Vision (cam)"  },
+          { fixedKey: "← →",       label:"Cycle CCTV Camera"   },
+          { fixedKey: "ESC",       label:"Close Menu / Exit"   },
+          { fixedKey: "R (board)", label:"Open Ouija Board"    },
+          { fixedKey: "R (doll)",  label:"Open Voodoo Doll"    },
+        ];
+
         ctx.fillStyle = "#5a3a18"; ctx.font = "italic 9px Georgia, serif"; ctx.textAlign = "left";
         ctx.fillText("click a row to rebind — then press any key", rx + 14, jy + 48);
 
-        actionDefs.forEach((a, i) => {
-          const bry = jy + 70 + i * 30;
+        // Clip the list area so rows don't bleed into the bottom hint
+        const listTop = jy + 62;
+        const listH   = jh - 62 - 22; // leave 22px for bottom hint
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(rx + 10, listTop, rw - 14, listH);
+        ctx.clip();
+        ctx.translate(0, -journalKeybindScrollY);
+
+        const ROW_H = 26;
+        let rowIdx = 0;
+
+        actionDefs.forEach((a) => {
+          const bry = listTop + rowIdx * ROW_H + 4;
           const isRebinding = rebindingAction === a.key;
-          ctx.fillStyle = isRebinding ? "rgba(200,160,40,0.25)" : (i % 2 === 0 ? "rgba(80,50,10,0.07)" : "rgba(0,0,0,0)");
-          ctx.fillRect(rx + 14, bry, rw - 28, 24);
-          if (isRebinding) { ctx.fillStyle = "#c8a020"; ctx.fillRect(rx + 14, bry, 3, 24); }
+          ctx.fillStyle = isRebinding ? "rgba(200,160,40,0.25)" : (rowIdx % 2 === 0 ? "rgba(80,50,10,0.07)" : "rgba(0,0,0,0)");
+          ctx.fillRect(rx + 14, bry, rw - 28, ROW_H - 2);
+          if (isRebinding) { ctx.fillStyle = "#c8a020"; ctx.fillRect(rx + 14, bry, 3, ROW_H - 2); }
           ctx.fillStyle = isRebinding ? "#7a5010" : "#3a2810";
           ctx.font = "11px Georgia, serif"; ctx.textAlign = "left";
-          ctx.fillText(a.label, rx + 22, bry + 15);
+          ctx.fillText(a.label, rx + 22, bry + 14);
           const keyStr = isRebinding ? "press any key..." : "[" + keybinds[a.key] + "]";
           ctx.fillStyle = isRebinding ? "#c8a020" : "#5a7a5a";
           ctx.font = isRebinding ? "italic 10px Georgia, serif" : "bold 10px monospace";
           ctx.textAlign = "right";
-          ctx.fillText(keyStr, rx + rw - 20, bry + 15);
+          ctx.fillText(keyStr, rx + rw - 20, bry + 14);
+          rowIdx++;
         });
+
+        // Divider before fixed keys
+        const divY = listTop + rowIdx * ROW_H + 6;
+        ctx.fillStyle = "rgba(80,50,10,0.25)";
+        ctx.fillRect(rx + 20, divY, rw - 40, 1);
+        ctx.fillStyle = "#8a6a3a"; ctx.font = "italic 9px Georgia, serif"; ctx.textAlign = "left";
+        ctx.fillText("fixed keys (not rebindable)", rx + 22, divY + 10);
+        rowIdx += 1;
+
+        fixedDefs.forEach((a) => {
+          const bry = listTop + rowIdx * ROW_H + 4;
+          ctx.fillStyle = rowIdx % 2 === 0 ? "rgba(80,50,10,0.04)" : "rgba(0,0,0,0)";
+          ctx.fillRect(rx + 14, bry, rw - 28, ROW_H - 2);
+          ctx.fillStyle = "#5a3a18"; ctx.font = "11px Georgia, serif"; ctx.textAlign = "left";
+          ctx.fillText(a.label, rx + 22, bry + 14);
+          ctx.fillStyle = "#7a5a30"; ctx.font = "bold 10px monospace"; ctx.textAlign = "right";
+          ctx.fillText("[" + a.fixedKey + "]", rx + rw - 20, bry + 14);
+          rowIdx++;
+        });
+
+        // Clamp scroll to content
+        const totalContentH = rowIdx * ROW_H + 20;
+        journalKeybindScrollY = Math.min(journalKeybindScrollY, Math.max(0, totalContentH - listH));
+
+        ctx.restore();
+
+        // Scroll indicator bar (right edge of right page)
+        if (totalContentH > listH) {
+          const barX = rx + rw - 6, barY = listTop, barH = listH;
+          ctx.fillStyle = "rgba(80,50,10,0.15)";
+          ctx.fillRect(barX, barY, 4, barH);
+          const thumbH = Math.max(20, barH * (listH / totalContentH));
+          const thumbY = barY + (journalKeybindScrollY / (totalContentH - listH)) * (barH - thumbH);
+          ctx.fillStyle = "rgba(100,70,20,0.5)";
+          ctx.beginPath(); ctx.roundRect(barX, thumbY, 4, thumbH, 2); ctx.fill();
+        }
       }
 
       // ── Bottom hints ──────────────────────────────────────────────────────
@@ -6303,45 +7020,749 @@
       ouijaSeqNextTime  = Date.now() + 950; // ms to dwell on each token
     }
 
-    // ── Voodoo Doll — push one pin ────────────────────────────────────────
-    function _triggerVoodooPinEvent() {
-      if (voodooSpent || voodooCooldown > 0 || voodooPinsLeft <= 0) return;
+    // ── Voodoo Doll popup ─────────────────────────────────────────────────
+    function drawVoodooDoll() {
+      const W = canvas.width, H = canvas.height;
+      const BW = 310, BH = 370;
+      const bx = (W - BW) / 2, by = (H - BH) / 2;
 
-      voodooPinsLeft--;
-      voodooCooldown = 2.5; // 2.5s between pins (prevents spam)
-      const isHeartPin = voodooPinsLeft === 0; // last pin = heart pin
+      // Dark vignette behind popup
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.68)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
 
-      if (!currentGhost) return;
+      ctx.save();
 
-      // Force an immediate EMF burst at the ghost's current position.
-      const hasEmf5 = currentGhost.evidence.includes("EMF Level 5");
-      const jitter  = isHeartPin ? 30 : 15;
-      const level   = isHeartPin ? 5 : (hasEmf5 && Math.random() < 0.5 ? 5 : 3 + Math.floor(Math.random() * 2));
-      emfSources.push({
-        x: ghostX + (Math.random() - 0.5) * jitter,
-        y: ghostY + (Math.random() - 0.5) * jitter,
-        level,
-        timer: isHeartPin ? 16 : 10,
-      });
-      if (emfSources.length > 6) emfSources.shift();
+      // ── Popup body ────────────────────────────────────────────────────
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.beginPath(); ctx.roundRect(bx+6, by+8, BW, BH, 10); ctx.fill();
+      const bg = ctx.createLinearGradient(bx, by, bx, by+BH);
+      bg.addColorStop(0, "#2a1e14"); bg.addColorStop(1, "#181008");
+      ctx.fillStyle = bg;
+      ctx.beginPath(); ctx.roundRect(bx, by, BW, BH, 10); ctx.fill();
+      ctx.strokeStyle = "#5a3820"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.roundRect(bx+3, by+3, BW-6, BH-6, 8); ctx.stroke();
+      ctx.strokeStyle = "#8a5030"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(bx+6, by+6, BW-12, BH-12, 6); ctx.stroke();
 
-      // Reset the event timer so the ghost fires again very soon.
-      ghostEventTimer = isHeartPin ? 0.3 : 1.0 + Math.random() * 1.5;
+      // Title
+      ctx.fillStyle = "#c08840"; ctx.font = "bold 15px serif"; ctx.textAlign = "center";
+      ctx.fillText("VOODOO DOLL", W/2, by + 26);
+      ctx.fillStyle = "#7a4a18"; ctx.font = "italic 10px serif";
+      ctx.fillText("push a pin into the doll", W/2, by + 40);
 
-      if (isHeartPin) {
-        // Heart pin: ghost teleports to the player's room (or right behind them).
-        const pRoom = _roomAtPoint(player.x + 8, player.y + 8);
-        if (pRoom) {
-          // Place ghost on a walkable spot in the same room, offset from player
-          ghostX = Math.min(Math.max(player.x + 40, pRoom.x + 10), pRoom.x + pRoom.w - 10);
-          ghostY = Math.min(Math.max(player.y + 40, pRoom.y + 10), pRoom.y + pRoom.h - 10);
-          ghostTargetX = ghostX;
-          ghostTargetY = ghostY;
+      // ── Doll body ─────────────────────────────────────────────────────
+      const dollCX = bx + BW/2;
+      const dollCY = by + 158; // pivot = waist
+
+      // Shadow ellipse
+      ctx.fillStyle = "rgba(0,0,0,0.4)";
+      ctx.beginPath(); ctx.ellipse(dollCX+3, dollCY+48, 30, 13, 0, 0, Math.PI*2); ctx.fill();
+
+      // Legs
+      ctx.fillStyle = "#7a5a3a";
+      ctx.fillRect(dollCX-20, dollCY+8, 17, 40);
+      ctx.fillRect(dollCX+3, dollCY+8, 17, 40);
+      ctx.fillStyle = "#5a3a20"; // feet
+      ctx.fillRect(dollCX-22, dollCY+44, 19, 7);
+      ctx.fillRect(dollCX+3, dollCY+44, 19, 7);
+
+      // Left arm
+      ctx.fillStyle = "#8a6040";
+      ctx.fillRect(dollCX-48, dollCY-32, 32, 15);
+      ctx.fillStyle = "#c8a070"; // hand
+      ctx.beginPath(); ctx.ellipse(dollCX-48, dollCY-25, 6, 8, 0, 0, Math.PI*2); ctx.fill();
+
+      // Right arm
+      ctx.fillStyle = "#8a6040";
+      ctx.fillRect(dollCX+16, dollCY-32, 32, 15);
+      ctx.fillStyle = "#c8a070";
+      ctx.beginPath(); ctx.ellipse(dollCX+48, dollCY-25, 6, 8, 0, 0, Math.PI*2); ctx.fill();
+
+      // Torso
+      ctx.fillStyle = "#8a6040";
+      ctx.fillRect(dollCX-18, dollCY-32, 36, 42);
+      // Burlap stitching seams
+      ctx.strokeStyle = "#5a3820"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(dollCX-18, dollCY-10); ctx.lineTo(dollCX+18, dollCY-10); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(dollCX, dollCY-32); ctx.lineTo(dollCX, dollCY+10); ctx.stroke();
+
+      // Neck
+      ctx.fillStyle = "#9a7050";
+      ctx.fillRect(dollCX-7, dollCY-48, 14, 18);
+
+      // Head
+      ctx.fillStyle = "#c8a070";
+      ctx.beginPath(); ctx.ellipse(dollCX, dollCY-58, 22, 20, 0, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = "#7a5030"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.ellipse(dollCX, dollCY-58, 22, 20, 0, 0, Math.PI*2); ctx.stroke();
+      // X eyes
+      ctx.strokeStyle = "#3a1808"; ctx.lineWidth = 1.5;
+      const ex1 = dollCX-9, ex2 = dollCX+9, ey = dollCY-61;
+      ctx.beginPath(); ctx.moveTo(ex1-3,ey-3); ctx.lineTo(ex1+3,ey+3); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ex1+3,ey-3); ctx.lineTo(ex1-3,ey+3); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ex2-3,ey-3); ctx.lineTo(ex2+3,ey+3); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ex2+3,ey-3); ctx.lineTo(ex2-3,ey+3); ctx.stroke();
+      // Stitched mouth
+      ctx.strokeStyle = "#3a1808"; ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(dollCX-8, dollCY-48);
+      for (let mi = 0; mi <= 4; mi++) ctx.lineTo(dollCX-8+mi*4, dollCY-48+(mi%2)*4);
+      ctx.stroke();
+
+      // ── Pin spot markers & doll body part labels ──────────────────────
+      // PIN_SPOTS: screen-space positions matched to VOODOO_PINS[].px/py offsets
+      const PIN_SPOTS = VOODOO_PINS.map(p => ({ x: dollCX + p.px, y: dollCY + p.py }));
+      _voodooPinRects = [];
+
+      // Heart marking on chest (matches pin 1 spot)
+      ctx.font = "18px serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = voodooPinUsed[1] ? "#2a0808" : (voodooAnimPinId === 1 ? "#ff4040" : "rgba(180,30,30,0.8)");
+      ctx.fillText("♥", PIN_SPOTS[1].x, PIN_SPOTS[1].y);
+      ctx.textBaseline = "alphabetic";
+
+      VOODOO_PINS.forEach((pin, i) => {
+        const sp = PIN_SPOTS[i];
+        const used = voodooPinUsed[i];
+        const animating = voodooAnimPinId === i;
+
+        if (used && !animating) {
+          // Spent: show used pin embedded
+          ctx.strokeStyle = "rgba(150,120,60,0.5)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(sp.x, sp.y, 8, 0, Math.PI*2); ctx.stroke();
+          ctx.strokeStyle = "#b0b0b0"; ctx.lineWidth = 1.8;
+          ctx.beginPath(); ctx.moveTo(sp.x, sp.y - 16); ctx.lineTo(sp.x, sp.y); ctx.stroke();
+          ctx.fillStyle = "#c84040";
+          ctx.beginPath(); ctx.arc(sp.x, sp.y - 16, 4, 0, Math.PI*2); ctx.fill();
+        } else if (!animating) {
+          // Available: pulsing ring + clickable
+          const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 350 + i * 1.1);
+          ctx.strokeStyle = `rgba(220,160,50,${pulse})`; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(sp.x, sp.y, 9, 0, Math.PI*2); ctx.stroke();
+          ctx.fillStyle = `rgba(220,160,50,${pulse*0.18})`;
+          ctx.beginPath(); ctx.arc(sp.x, sp.y, 9, 0, Math.PI*2); ctx.fill();
+          // Doll spot is clickable
+          _voodooPinRects.push({ id: i, cx: sp.x, cy: sp.y, r: 15 });
         }
-        // Additional D.O.T.S. disturb if evidence present
-        if (currentGhost.evidence.includes("D.O.T.S. Projector")) dotsDisturbTimer = 6;
-        voodooSpent = true;
+      });
+
+      // ── Pin push-in animation ─────────────────────────────────────────
+      if (voodooAnimPinId >= 0) {
+        const sp = PIN_SPOTS[voodooAnimPinId];
+        const t = voodooAnimT;
+        // Pin plunges from 30px above target to target
+        const needleEndY = sp.y;
+        const needleStartY = sp.y - 30;
+        const needleCurY = needleStartY + (needleEndY - needleStartY) * Math.min(1, t * 1.5);
+        const headY = needleCurY - 18;
+
+        // Needle shaft
+        ctx.strokeStyle = "#d8d8d8"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(sp.x, headY); ctx.lineTo(sp.x, needleCurY); ctx.stroke();
+        // Pin head — red disc
+        const headGrad = ctx.createRadialGradient(sp.x-2, headY-2, 1, sp.x, headY, 6);
+        headGrad.addColorStop(0, "#ff8080"); headGrad.addColorStop(1, "#c01818");
+        ctx.fillStyle = headGrad;
+        ctx.beginPath(); ctx.arc(sp.x, headY, 6, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = "#ff4040"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(sp.x, headY, 6, 0, Math.PI*2); ctx.stroke();
+
+        // Effect label after pin is embedded
+        if (t > 0.7 || voodooEffectFired) {
+          const labelAlpha = Math.min(1, (t - 0.7) / 0.3);
+          const pin = VOODOO_PINS[voodooAnimPinId];
+          const effectLabels = {
+            sanity:   "SANITY −25%",
+            hunt:     "HUNT!",
+            appear:   "GHOST APPEARS",
+            evidence: "GHOST ACTIVITY",
+          };
+          const lbl = effectLabels[pin.effect] || pin.effect.toUpperCase();
+          ctx.globalAlpha = Math.max(0, labelAlpha);
+          ctx.fillStyle = pin.effect === 'hunt' ? "#ff5050" : "#ffe060";
+          ctx.font = `bold ${pin.effect === 'hunt' ? 20 : 15}px serif`;
+          ctx.textAlign = "center";
+          ctx.fillText(lbl, W/2, by + 222);
+          ctx.globalAlpha = 1;
+        }
       }
+
+      // ── Separator ─────────────────────────────────────────────────────
+      const sepY = by + 232;
+      ctx.strokeStyle = "rgba(100,60,20,0.5)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx+24, sepY); ctx.lineTo(bx+BW-24, sepY); ctx.stroke();
+
+      // ── Pins remaining / spent indicator (below separator) ────────────────
+      {
+        const avail = VOODOO_PINS.filter((p, i) => !voodooPinUsed[i]);
+        const infoY = sepY + 22;
+        ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        if (voodooAnimPinId >= 0) {
+          ctx.fillStyle = "#e8c060"; ctx.font = "italic 13px serif";
+          ctx.fillText("...", W/2, infoY);
+        } else if (avail.length === 0) {
+          ctx.fillStyle = "#806040"; ctx.font = "italic 12px serif";
+          ctx.fillText("All pins are spent.", W/2, infoY);
+        } else {
+          ctx.fillStyle = "#b89050"; ctx.font = "12px serif";
+          ctx.fillText(`${avail.length} pin${avail.length !== 1 ? "s" : ""} remaining`, W/2, infoY);
+        }
+        ctx.textAlign = "left";
+      }
+
+      // ── Footer ─────────────────────────────────────────────────────────
+      ctx.fillStyle = "rgba(30,14,4,0.88)";
+      ctx.beginPath(); ctx.roundRect(bx, by+BH-24, BW, 24, [0,0,10,10]); ctx.fill();
+      ctx.fillStyle = "#b89040"; ctx.font = "10px monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.fillText(
+        voodooAnimPinId >= 0 ? "..." : "[E] push random pin   [R] put down",
+        W/2, by+BH-7
+      );
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.restore();
+    }
+
+    // ── Voodoo Doll — start a pin's plunge animation ─────────────────────
+    function _startVoodooPinAnim(pinId) {
+      if (voodooAnimPinId >= 0 || voodooPinUsed[pinId]) return;
+      voodooAnimPinId   = pinId;
+      voodooAnimT       = 0;
+      voodooEffectFired = false;
+    }
+
+    // ── Voodoo Doll — fire the effect for the given pin ───────────────────
+    function _fireVoodooPinEffect(pinId) {
+      const pin = VOODOO_PINS[pinId];
+      if (!pin) return;
+      voodooPinUsed[pinId] = true;
+      if (voodooPinUsed.every(u => u)) voodooSpent = true;
+
+      if (pin.effect === 'sanity') {
+        // Head pin: drain 25% sanity
+        playerSanity = Math.max(0, playerSanity - 25);
+
+      } else if (pin.effect === 'hunt') {
+        // Heart pin: hunt trigger — red flash, ghost teleports to player's room, appears
+        ghostHuntFlash  = 1.5;
+        ghostAppearTimer = 3.0;
+        const pRoom = _roomAtPoint(player.x + 8, player.y + 8);
+        if (pRoom && currentGhost) {
+          ghostX = Math.min(Math.max(player.x + 55, pRoom.x + 12), pRoom.x + pRoom.w - 12);
+          ghostY = Math.min(Math.max(player.y + 55, pRoom.y + 12), pRoom.y + pRoom.h - 12);
+          ghostTargetX = ghostX; ghostTargetY = ghostY;
+        }
+        ghostEventTimer = 0.3;
+        emfSources.push({ x: ghostX, y: ghostY, level: 5, timer: 16 });
+        if (emfSources.length > 6) emfSources.shift();
+
+      } else if (pin.effect === 'appear') {
+        // Shoulder pins: ghost appears in gray translucent form for 1.5s
+        ghostAppearTimer = 1.5;
+
+      } else if (pin.effect === 'evidence') {
+        // Body pin: one evidence-style ghost response
+        ghostEventTimer = 0.8 + Math.random() * 0.5;
+        const hasEmf5 = currentGhost?.evidence.includes("EMF Level 5");
+        emfSources.push({
+          x: ghostX + (Math.random() - 0.5) * 20,
+          y: ghostY + (Math.random() - 0.5) * 20,
+          level: hasEmf5 ? 5 : 3,
+          timer: 12,
+        });
+        if (emfSources.length > 6) emfSources.shift();
+        if (currentGhost?.evidence.includes("D.O.T.S. Projector"))
+          dotsDisturbTimer = Math.max(dotsDisturbTimer, 5);
+      }
+    }
+
+    // ── Tarot Cards — apply a drawn card's effect ──────────────────────────
+    function _applyTarotEffect(effect) {
+      switch (effect) {
+        case "activity":
+          // The Spire — boost ghost event rate temporarily
+          ghostEventTimer = Math.min(ghostEventTimer, 0.4);
+          dotsDisturbTimer = Math.max(dotsDisturbTimer, 6);
+          emfSources.push({ x: ghostX, y: ghostY, level: 4, timer: 14 });
+          break;
+        case "fate":
+          // Fate's Turn — randomly raise or lower sanity by 25
+          if (Math.random() < 0.5) playerSanity = Math.min(100, playerSanity + 25);
+          else                     playerSanity = Math.max(0,   playerSanity - 25);
+          break;
+        case "trickster":
+          // The Trickster — fake flash, no real effect
+          ghostHuntFlash = 0.4; // brief red flash, no actual hunt
+          ghostAppearTimer = 0.6;
+          break;
+        case "event":
+          // The Fiend — trigger a ghost event (EMF spike + ghost appears)
+          ghostEventTimer = 0.1;
+          ghostAppearTimer = 2.5;
+          emfSources.push({ x: ghostX, y: ghostY, level: 5, timer: 12 });
+          if (currentGhost?.evidence.includes("D.O.T.S. Projector"))
+            dotsDisturbTimer = Math.max(dotsDisturbTimer, 4);
+          break;
+        case "hunt":
+          // The Reaper — cursed hunt
+          ghostHuntFlash = 1.5;
+          ghostAppearTimer = 3.0;
+          emfSources.push({ x: ghostX, y: ghostY, level: 5, timer: 16 });
+          break;
+        case "watcher":
+          // The Watcher — ghost locked to favourite room briefly (use ghostFavRoom)
+          if (ghostFavRoom) {
+            ghostX = ghostFavRoom.x + ghostFavRoom.w * 0.5;
+            ghostY = ghostFavRoom.y + ghostFavRoom.h * 0.5;
+          }
+          ghostEventTimer = Math.max(ghostEventTimer, 6); // suppresses events briefly
+          break;
+        case "dawn":
+          // The Dawn — full sanity restore
+          playerSanity = 100;
+          break;
+        case "eclipse":
+          // The Eclipse — sanity drops to zero
+          playerSanity = 0;
+          break;
+        case "saint":
+          // The Saint — restore sanity by 50 (revival effect, partial if death implemented later)
+          playerSanity = Math.min(100, playerSanity + 50);
+          break;
+        case "death":
+          // The Noose — instant lose condition (trigger hunt immediately and max flash)
+          ghostHuntFlash = 1.5;
+          ghostAppearTimer = 3.5;
+          playerSanity = 0;
+          emfSources.push({ x: ghostX, y: ghostY, level: 5, timer: 18 });
+          break;
+      }
+    }
+
+    // ── Tarot Cards — draw the popup ──────────────────────────────────────
+    function drawTarotCards() {
+      const W = canvas.width, H = canvas.height;
+      const BW = 340, BH = 500;
+      const bx = (W - BW) / 2, by = (H - BH) / 2;
+
+      // Vignette
+      ctx.save();
+      ctx.fillStyle = "rgba(0,0,0,0.72)";
+      ctx.fillRect(0, 0, W, H);
+
+      // Panel background — aged dark parchment
+      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.beginPath(); ctx.roundRect(bx+4, by+4, BW, BH, 10); ctx.fill();
+      ctx.fillStyle = "#1a0e08";
+      ctx.beginPath(); ctx.roundRect(bx, by, BW, BH, 10); ctx.fill();
+      ctx.strokeStyle = "#5a3a18"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(bx, by, BW, BH, 10); ctx.stroke();
+
+      const cx2 = bx + BW / 2, cy2 = by + BH / 2;
+
+      // ── Deck stack (when no card drawn) ──────────────────────────────────
+      if (tarotDrawnCard === null) {
+        const remaining = tarotDeck.length;
+        const stackX = cx2 - 60, stackY = by + 80;
+        const CW = 120, CH = 180;
+        // Stack shadow layers
+        for (let i = Math.min(remaining - 1, 5); i >= 0; i--) {
+          const ox = i * 2, oy = i * 2;
+          ctx.fillStyle = `rgba(${20+i*8},${10+i*4},${5+i*2},0.9)`;
+          ctx.beginPath(); ctx.roundRect(stackX - ox, stackY - oy, CW, CH, 6); ctx.fill();
+          ctx.strokeStyle = "rgba(100,70,30,0.5)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.roundRect(stackX - ox, stackY - oy, CW, CH, 6); ctx.stroke();
+        }
+        // Top card back face
+        if (remaining > 0) {
+          ctx.fillStyle = "#2a1408";
+          ctx.beginPath(); ctx.roundRect(stackX, stackY, CW, CH, 6); ctx.fill();
+          // Back design — ornate cross-hatch border
+          ctx.strokeStyle = "#8a5020"; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.roundRect(stackX+6, stackY+6, CW-12, CH-12, 4); ctx.stroke();
+          ctx.strokeStyle = "#6a3818"; ctx.lineWidth = 0.8;
+          ctx.beginPath(); ctx.roundRect(stackX+10, stackY+10, CW-20, CH-20, 3); ctx.stroke();
+          // Back ornament — eye in center
+          ctx.strokeStyle = "#8a5020"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.ellipse(stackX+CW/2, stackY+CH/2, 22, 14, 0, 0, Math.PI*2); ctx.stroke();
+          ctx.fillStyle = "#c07030";
+          ctx.beginPath(); ctx.arc(stackX+CW/2, stackY+CH/2, 6, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#1a0808";
+          ctx.beginPath(); ctx.arc(stackX+CW/2, stackY+CH/2, 3, 0, Math.PI*2); ctx.fill();
+          // Corner diamond marks
+          [[12,12],[CW-12,12],[12,CH-12],[CW-12,CH-12]].forEach(([dx,dy]) => {
+            ctx.fillStyle = "#8a5020";
+            ctx.save(); ctx.translate(stackX+dx, stackY+dy); ctx.rotate(Math.PI/4);
+            ctx.fillRect(-3,-3,6,6); ctx.restore();
+          });
+        }
+
+        // Remaining count
+        ctx.fillStyle = "#c8a060"; ctx.font = "bold 13px serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        ctx.fillText(`${remaining} card${remaining !== 1 ? "s" : ""} remaining`, cx2, stackY + CH + 22);
+
+        // Footer hint
+        ctx.fillStyle = "rgba(30,14,4,0.88)";
+        ctx.beginPath(); ctx.roundRect(bx, by+BH-28, BW, 28, [0,0,10,10]); ctx.fill();
+        ctx.fillStyle = remaining > 0 ? "#b89040" : "#605030";
+        ctx.font = "10px monospace"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+        ctx.fillText(remaining > 0 ? "[E] draw a card   [R] put down" : "deck spent", cx2, by+BH-10);
+        ctx.textAlign = "left";
+        ctx.restore();
+        return;
+      }
+
+      // ── Card flip reveal animation ────────────────────────────────────────
+      const card = tarotDrawnCard;
+      const CW = 130, CH = 200;
+      const cardX = cx2 - CW / 2, cardY = by + 60;
+
+      if (!tarotBurning) {
+        // Flip: squash card width from 0→full using tarotRevealT
+        const flipProgress = Math.min(1, tarotRevealT * 2);
+        const showFace     = tarotRevealT >= 0.5;
+        const scaleX       = showFace ? (flipProgress - 1) * -1 + 1 : 1 - flipProgress;
+        ctx.save();
+        ctx.translate(cx2, cardY + CH / 2);
+        ctx.scale(Math.max(0.01, scaleX), 1);
+        ctx.translate(-CW / 2, -CH / 2);
+
+        if (!showFace) {
+          // Card back during first half of flip
+          ctx.fillStyle = "#2a1408";
+          ctx.beginPath(); ctx.roundRect(0, 0, CW, CH, 6); ctx.fill();
+          ctx.strokeStyle = "#8a5020"; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.roundRect(6, 6, CW-12, CH-12, 4); ctx.stroke();
+          ctx.strokeStyle = "rgba(100,70,30,0.6)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.roundRect(0, 0, CW, CH, 6); ctx.stroke();
+        } else {
+          // Card face — art only, no text
+          _drawTarotCardFace(ctx, card.effect, 0, 0, CW, CH);
+        }
+        ctx.restore();
+      } else {
+        // ── Burn / disintegration ─────────────────────────────────────────
+        // Card fades + breaks apart in ember particles
+        const bt = tarotBurnT;
+        const alpha = Math.max(0, 1 - bt * 1.4);
+        ctx.save();
+        ctx.translate(cx2, cardY + CH / 2);
+        ctx.globalAlpha = alpha;
+        // Card face dissolves upward
+        ctx.translate(0, -bt * 30);
+        ctx.scale(1 - bt * 0.3, 1 - bt * 0.2);
+        ctx.translate(-CW / 2, -CH / 2);
+        _drawTarotCardFace(ctx, card.effect, 0, 0, CW, CH);
+        ctx.restore();
+
+        // Ember particles — deterministic from burnT
+        const particleCount = 18;
+        for (let i = 0; i < particleCount; i++) {
+          const seed = i * 137.5;
+          const life = Math.max(0, bt - (i / particleCount) * 0.5);
+          if (life <= 0) continue;
+          const pAlpha = Math.max(0, 1 - life * 1.8);
+          const px3 = cx2 + Math.sin(seed) * (CW * 0.6) * bt * 2 + Math.cos(seed * 0.7) * 20;
+          const py3 = (cardY + CH * 0.5) - life * (60 + Math.sin(seed * 2) * 30);
+          const pr  = Math.max(0.5, 2.5 * (1 - life));
+          ctx.save();
+          ctx.globalAlpha = pAlpha;
+          ctx.fillStyle = i % 3 === 0 ? "#ff8020" : i % 3 === 1 ? "#ffcc40" : "#cc4010";
+          ctx.beginPath(); ctx.arc(px3, py3, pr, 0, Math.PI*2); ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // ── Card name label under the card ────────────────────────────────────
+      {
+        const nameAlpha = tarotBurning
+          ? Math.max(0, 1 - tarotBurnT * 2)   // fades out with the burn
+          : Math.max(0, (tarotRevealT - 0.5) * 2); // fades in once face shows
+        if (nameAlpha > 0) {
+          ctx.save();
+          ctx.globalAlpha = nameAlpha;
+          ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+          // Soft shadow
+          ctx.fillStyle = "rgba(0,0,0,0.6)";
+          ctx.font = "bold 15px Georgia, serif";
+          ctx.fillText(card.name, cx2 + 1, cardY + CH + 23);
+          // Main text — warm gold
+          ctx.fillStyle = "#e8c870";
+          ctx.fillText(card.name, cx2, cardY + CH + 22);
+          ctx.restore();
+        }
+      }
+
+      // Footer — no hint while card is showing
+      ctx.fillStyle = "rgba(30,14,4,0.88)";
+      ctx.beginPath(); ctx.roundRect(bx, by+BH-28, BW, 28, [0,0,10,10]); ctx.fill();
+      ctx.fillStyle = "#605030"; ctx.font = "10px monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.fillText("...", cx2, by+BH-10);
+      ctx.textAlign = "left";
+      ctx.restore();
+    }
+
+    // ── Tarot card face art (art-only, no text) ────────────────────────────
+    function _drawTarotCardFace(ctx, effect, x, y, w, h) {
+      // Card base
+      ctx.fillStyle = "#f0e8d0";
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, 6); ctx.fill();
+      // Ornate border
+      ctx.strokeStyle = "#8a6020"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(x+3, y+3, w-6, h-6, 4); ctx.stroke();
+      ctx.strokeStyle = "rgba(120,80,20,0.4)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(x+7, y+7, w-14, h-14, 3); ctx.stroke();
+
+      const mx = x + w / 2, my = y + h / 2;
+
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x+8, y+8, w-16, h-16); ctx.clip(); // clip art to inner frame
+
+      switch (effect) {
+        case "activity": { // The Spire — tall dark tower against red sky
+          // Sky gradient
+          const skG = ctx.createLinearGradient(x, y+8, x, my);
+          skG.addColorStop(0, "#8b0000"); skG.addColorStop(1, "#2a0808");
+          ctx.fillStyle = skG; ctx.fillRect(x+8, y+8, w-16, h/2);
+          // Ground
+          ctx.fillStyle = "#1a1008"; ctx.fillRect(x+8, my, w-16, h/2-8);
+          // Tower — thin tall spire
+          ctx.fillStyle = "#0d0d0d";
+          ctx.fillRect(mx-8, y+20, 16, h*0.6);
+          ctx.fillRect(mx-14, my-20, 28, 40); // base widening
+          // Spire tip
+          ctx.beginPath(); ctx.moveTo(mx, y+14); ctx.lineTo(mx-8, y+24); ctx.lineTo(mx+8, y+24); ctx.closePath(); ctx.fill();
+          // Lit windows
+          ctx.fillStyle = "#ff8c00";
+          for (let r=0; r<4; r++) ctx.fillRect(mx-3, y+30+r*14, 6, 7);
+          // Lightning crack in sky
+          ctx.strokeStyle = "#ffee88"; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(mx+25, y+15); ctx.lineTo(mx+18, y+30); ctx.lineTo(mx+22, y+38); ctx.lineTo(mx+12, y+52); ctx.stroke();
+          break; }
+
+        case "fate": { // Fate's Turn — split wheel, light half / dark half
+          // Background
+          ctx.fillStyle = "#1a1020"; ctx.fillRect(x+8, y+8, w-16, h-16);
+          // Wheel
+          const wR = Math.min(w,h)*0.3;
+          ctx.fillStyle = "#f5f0e0";
+          ctx.beginPath(); ctx.arc(mx, my, wR, -Math.PI/2, Math.PI/2); ctx.fill();
+          ctx.fillStyle = "#1a0828";
+          ctx.beginPath(); ctx.arc(mx, my, wR, Math.PI/2, 3*Math.PI/2); ctx.fill();
+          ctx.strokeStyle = "#c8a040"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(mx, my, wR, 0, Math.PI*2); ctx.stroke();
+          // Spokes
+          ctx.strokeStyle = "#c8a040"; ctx.lineWidth = 1;
+          for (let s=0; s<8; s++) {
+            const a = s * Math.PI/4;
+            ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx+Math.cos(a)*wR, my+Math.sin(a)*wR); ctx.stroke();
+          }
+          ctx.fillStyle = "#c8a040"; ctx.beginPath(); ctx.arc(mx, my, 5, 0, Math.PI*2); ctx.fill();
+          // Dividing line
+          ctx.strokeStyle = "#c8a040"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(mx, my-wR-8); ctx.lineTo(mx, my+wR+8); ctx.stroke();
+          break; }
+
+        case "trickster": { // The Trickster — jester mask, split face
+          ctx.fillStyle = "#e8d880"; ctx.fillRect(x+8, y+8, w-16, h-16);
+          // Jester hat
+          ctx.fillStyle = "#cc2020";
+          ctx.beginPath(); ctx.moveTo(mx-22, my-10); ctx.lineTo(mx-32, y+22); ctx.lineTo(mx-8, my-8); ctx.closePath(); ctx.fill();
+          ctx.fillStyle = "#2020cc";
+          ctx.beginPath(); ctx.moveTo(mx+22, my-10); ctx.lineTo(mx+32, y+22); ctx.lineTo(mx+8, my-8); ctx.closePath(); ctx.fill();
+          // Bells
+          ctx.fillStyle = "#f0c030"; ctx.beginPath(); ctx.arc(mx-32, y+22, 6, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#f0c030"; ctx.beginPath(); ctx.arc(mx+32, y+22, 6, 0, Math.PI*2); ctx.fill();
+          // Split face: smile left / frown right
+          ctx.strokeStyle = "#2a1808"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(mx-14, my+8, 10, 0, Math.PI); ctx.stroke(); // smile left
+          ctx.beginPath(); ctx.arc(mx+14, my+8, 10, Math.PI, 0); ctx.stroke(); // frown right
+          // Eyes
+          ctx.fillStyle = "#2a1808";
+          ctx.beginPath(); ctx.arc(mx-14, my-4, 4, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(mx+14, my-4, 4, 0, Math.PI*2); ctx.fill();
+          // Center divider
+          ctx.strokeStyle = "#2a1808"; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(mx, y+30); ctx.lineTo(mx, y+h-20); ctx.stroke();
+          break; }
+
+        case "event": { // The Fiend — demonic horned face in red mist
+          const bg2 = ctx.createRadialGradient(mx, my, 10, mx, my, w*0.6);
+          bg2.addColorStop(0, "#5a0808"); bg2.addColorStop(1, "#0a0004");
+          ctx.fillStyle = bg2; ctx.fillRect(x+8, y+8, w-16, h-16);
+          // Horns
+          ctx.fillStyle = "#8a0010";
+          ctx.beginPath(); ctx.moveTo(mx-18, my-18); ctx.lineTo(mx-30, y+20); ctx.lineTo(mx-6, my-12); ctx.closePath(); ctx.fill();
+          ctx.beginPath(); ctx.moveTo(mx+18, my-18); ctx.lineTo(mx+30, y+20); ctx.lineTo(mx+6, my-12); ctx.closePath(); ctx.fill();
+          // Face outline
+          ctx.fillStyle = "#3a0808";
+          ctx.beginPath(); ctx.ellipse(mx, my, 26, 30, 0, 0, Math.PI*2); ctx.fill();
+          // Glowing eyes
+          ctx.fillStyle = "#ff3300";
+          ctx.beginPath(); ctx.ellipse(mx-10, my-8, 7, 5, 0, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.ellipse(mx+10, my-8, 7, 5, 0, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#ff8844"; ctx.beginPath(); ctx.arc(mx-10, my-8, 3, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#ff8844"; ctx.beginPath(); ctx.arc(mx+10, my-8, 3, 0, Math.PI*2); ctx.fill();
+          // Jagged mouth
+          ctx.strokeStyle = "#ff4400"; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.moveTo(mx-12, my+10);
+          for (let t=-12; t<=12; t+=4) ctx.lineTo(mx+t, my+10+(t%8===0?6:0));
+          ctx.stroke();
+          break; }
+
+        case "hunt": { // The Reaper — cloaked figure with scythe
+          ctx.fillStyle = "#0a0808"; ctx.fillRect(x+8, y+8, w-16, h-16);
+          // Moon
+          ctx.fillStyle = "#e8e0c8"; ctx.beginPath(); ctx.arc(mx+18, y+28, 18, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#0a0808"; ctx.beginPath(); ctx.arc(mx+24, y+25, 15, 0, Math.PI*2); ctx.fill();
+          // Reaper cloak
+          ctx.fillStyle = "#1a1010";
+          ctx.beginPath(); ctx.moveTo(mx, y+40); ctx.lineTo(mx-22, y+h-20); ctx.lineTo(mx+22, y+h-20); ctx.closePath(); ctx.fill();
+          // Hood
+          ctx.fillStyle = "#111"; ctx.beginPath(); ctx.arc(mx, y+44, 14, Math.PI, 0); ctx.fill();
+          ctx.fillStyle = "#050505"; ctx.beginPath(); ctx.arc(mx, y+48, 10, 0, Math.PI*2); ctx.fill();
+          // Scythe
+          ctx.strokeStyle = "#c0c0c0"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(mx+18, y+30); ctx.lineTo(mx-10, y+h-20); ctx.stroke();
+          ctx.fillStyle = "#b8b8b8";
+          ctx.beginPath(); ctx.moveTo(mx+18, y+30); ctx.quadraticCurveTo(mx+36, y+50, mx+20, y+65);
+          ctx.lineTo(mx+14, y+62); ctx.quadraticCurveTo(mx+30, y+50, mx+12, y+32); ctx.closePath(); ctx.fill();
+          break; }
+
+        case "watcher": { // The Watcher — single giant eye in a keyhole
+          ctx.fillStyle = "#0c0c18"; ctx.fillRect(x+8, y+8, w-16, h-16);
+          // Stone arch / keyhole shape
+          ctx.fillStyle = "#1c1c28";
+          ctx.beginPath(); ctx.arc(mx, my-10, 30, Math.PI, 0); ctx.lineTo(mx+20, my+30); ctx.lineTo(mx-20, my+30); ctx.closePath(); ctx.fill();
+          ctx.strokeStyle = "#5050a0"; ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(mx, my-10, 30, Math.PI, 0); ctx.lineTo(mx+20, my+30); ctx.lineTo(mx-20, my+30); ctx.closePath(); ctx.stroke();
+          // Pupil-less eye
+          ctx.fillStyle = "#c8f0e8";
+          ctx.beginPath(); ctx.ellipse(mx, my-10, 20, 12, 0, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#1a5050";
+          ctx.beginPath(); ctx.arc(mx, my-10, 8, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = "#040810";
+          ctx.beginPath(); ctx.arc(mx, my-10, 4, 0, Math.PI*2); ctx.fill();
+          // Eye-shine
+          ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.beginPath(); ctx.arc(mx+4, my-14, 2, 0, Math.PI*2); ctx.fill();
+          break; }
+
+        case "dawn": { // The Dawn — sunrise rays, warm horizon
+          const dawnG = ctx.createLinearGradient(x, y+8, x, y+h-8);
+          dawnG.addColorStop(0, "#1a2040"); dawnG.addColorStop(0.5, "#e87040"); dawnG.addColorStop(1, "#f0c870");
+          ctx.fillStyle = dawnG; ctx.fillRect(x+8, y+8, w-16, h-16);
+          // Sun half-circle at horizon
+          const horY = my + 20;
+          ctx.fillStyle = "#fff0a0"; ctx.beginPath(); ctx.arc(mx, horY, 28, Math.PI, 0); ctx.fill();
+          // Rays
+          ctx.strokeStyle = "rgba(255,230,120,0.6)"; ctx.lineWidth = 1.5;
+          for (let r=0; r<8; r++) {
+            const ra = -Math.PI + r*(Math.PI/7);
+            ctx.beginPath(); ctx.moveTo(mx+Math.cos(ra)*30, horY+Math.sin(ra)*30);
+            ctx.lineTo(mx+Math.cos(ra)*58, horY+Math.sin(ra)*58); ctx.stroke();
+          }
+          // Ground line
+          ctx.strokeStyle = "#8a6020"; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(x+8, horY); ctx.lineTo(x+w-8, horY); ctx.stroke();
+          break; }
+
+        case "eclipse": { // The Eclipse — total eclipse, black circle
+          ctx.fillStyle = "#080808"; ctx.fillRect(x+8, y+8, w-16, h-16);
+          // Corona
+          const corG = ctx.createRadialGradient(mx, my, 30, mx, my, 60);
+          corG.addColorStop(0, "transparent"); corG.addColorStop(0.5, "rgba(180,120,20,0.5)"); corG.addColorStop(1, "transparent");
+          ctx.fillStyle = corG; ctx.beginPath(); ctx.arc(mx, my, 60, 0, Math.PI*2); ctx.fill();
+          // Corona streamers
+          ctx.strokeStyle = "rgba(200,140,30,0.4)"; ctx.lineWidth = 1;
+          for (let r=0; r<12; r++) {
+            const a = r*(Math.PI/6);
+            const len = 28 + Math.sin(r*137)*12;
+            ctx.beginPath(); ctx.moveTo(mx+Math.cos(a)*32, my+Math.sin(a)*32);
+            ctx.lineTo(mx+Math.cos(a)*(32+len), my+Math.sin(a)*(32+len)); ctx.stroke();
+          }
+          // Black moon disc
+          ctx.fillStyle = "#030305"; ctx.beginPath(); ctx.arc(mx, my, 30, 0, Math.PI*2); ctx.fill();
+          ctx.strokeStyle = "#1a0808"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(mx, my, 30, 0, Math.PI*2); ctx.stroke();
+          break; }
+
+        case "saint": { // The Saint — radiant cross with warm glow
+          const saintG = ctx.createRadialGradient(mx, my, 5, mx, my, 60);
+          saintG.addColorStop(0, "#fff8e0"); saintG.addColorStop(0.5, "#e0c860"); saintG.addColorStop(1, "#2a1808");
+          ctx.fillStyle = saintG; ctx.fillRect(x+8, y+8, w-16, h-16);
+          // Cross
+          ctx.fillStyle = "#f0e0a0";
+          ctx.fillRect(mx-6, my-38, 12, 72); // vertical
+          ctx.fillRect(mx-28, my-16, 56, 12); // horizontal
+          // Glow rings
+          for (let r=1; r<=3; r++) {
+            ctx.strokeStyle = `rgba(255,240,160,${0.4-r*0.1})`; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(mx, my, r*14, 0, Math.PI*2); ctx.stroke();
+          }
+          // Center gem
+          ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(mx, my, 5, 0, Math.PI*2); ctx.fill();
+          break; }
+
+        case "death": { // The Noose — rope and noose against void
+          ctx.fillStyle = "#060606"; ctx.fillRect(x+8, y+8, w-16, h-16);
+          // Gallows beam
+          ctx.fillStyle = "#2a1808";
+          ctx.fillRect(mx-30, y+18, 60, 8);  // horizontal beam
+          ctx.fillRect(mx-4, y+18, 8, h*0.25); // vertical post hint
+          // Rope from beam down
+          ctx.strokeStyle = "#8a6030"; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(mx+12, y+26); ctx.lineTo(mx+12, my-18); ctx.stroke();
+          // Noose loop
+          ctx.strokeStyle = "#a07040"; ctx.lineWidth = 2.5;
+          ctx.beginPath(); ctx.arc(mx+12, my-6, 12, 0, Math.PI*2); ctx.stroke();
+          // Noose knot
+          ctx.fillStyle = "#a07040"; ctx.beginPath(); ctx.arc(mx+12, my-18, 5, 0, Math.PI*2); ctx.fill();
+          // Crow perched on beam
+          ctx.fillStyle = "#1a1010";
+          ctx.beginPath(); ctx.ellipse(mx-18, y+16, 8, 5, -0.3, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(mx-12, y+12, 4, 0, Math.PI*2); ctx.fill();
+          // Crow eye
+          ctx.fillStyle = "#ff2020"; ctx.beginPath(); ctx.arc(mx-10, y+11, 1.5, 0, Math.PI*2); ctx.fill();
+          break; }
+      }
+
+      ctx.restore(); // end clip
+    }
+
+    function _breakMusicBox() {
+      musicBoxBroken = true;
+      musicBoxActive = false;
+
+      // Remove Music Box from inventory; fix selected slot if needed
+      const idx = inventory.indexOf("Music Box");
+      if (idx >= 0) {
+        inventory.splice(idx, 1);
+        if (selectedSlot >= inventory.length) selectedSlot = Math.max(0, inventory.length - 1);
+      }
+
+      // Spawn 2 broken pieces near the player — fixed (not pickupable), no label
+      const scatter = [
+        { dx: -10, dy:  -6, rot: -0.5 },
+        { dx:   9, dy:   8, rot:  0.9 },
+      ];
+      scatter.forEach((s, i) => {
+        worldItems.push({
+          name:          "",                // empty → no label drawn
+          x:             player.x + s.dx,
+          y:             player.y + s.dy,
+          facing:        s.rot,
+          active:        false,
+          written:       false,
+          writeAnimTimer: 0,
+          fixed:         true,             // blocks all pickup paths
+          noLabel:       true,             // suppresses pickup prompt
+          style:         "music_box_shard",
+          shardIndex:    i,
+        });
+      });
     }
 
     function _breakOuijaBoard() {
@@ -7907,8 +9328,10 @@
         if (cameraViewMode) { drawCameraView(); drawMobileControls(); }
         else {
           draw();
+          if (voodooDollOpen)    drawVoodooDoll();
           if (ouijaBoardOpen)    drawOuijaBoard();
           if (hauntedMirrorOpen) drawHauntedMirror();
+          if (tarotOpen)         drawTarotCards();
           if (journalOpen)      drawJournal();
           if (equipmentOpen)    drawEquipment();
           if (dangerTimerOpen)  drawDangerTimer();
