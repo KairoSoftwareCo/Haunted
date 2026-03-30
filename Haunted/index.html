@@ -204,8 +204,16 @@
     };
 
     // --- Screen state ---
-    // menuPhase: "title" = haunted identity screen | "corkboard" = setup menu | null = in-game
-    let menuPhase      = "profile"; // starts at profile screen; "title" after login
+    // menuPhase: "intro" = opening sequence | "title" = haunted identity screen | "corkboard" = setup menu | null = in-game
+    let menuPhase      = "intro"; // starts with intro sequence; routes to profile or title after
+
+    // Intro sequence state
+    let _introPhase    = 0;      // 0="Haunted" fade-in, 1=hold, 2=fade-out, 3="Ryan's" fade-in, 4=hold, 5=fade-out, 6=done
+    let _introT        = 0;      // seconds elapsed in current phase
+    let _introAlpha    = 0;      // current text opacity 0..1
+    let _introPostAuth = null;   // set by IIFE: "title" if logged in, "profile" if not
+    // Phase durations in seconds: [fade-in, HOLD, fade-out, fade-in, HOLD, fade-out]
+    const INTRO_DUR = [1.0, 2.4, 0.8, 0.8, 2.2, 0.7];
     let titleScreenActive = true;   // convenience alias: true when menuPhase !== null
     let _corkboardPage = 0;         // active board index: 0=Map 1=Loadout 2=Investigator
     const CORKBOARD_PAGES = 3;
@@ -512,7 +520,7 @@
 
     function showTitle() {
       gameRunning = false;
-      menuPhase = "title";
+      menuPhase = "corkboard";
       titleScreenActive = true;
       player.x = 240;
       player.y = 918;
@@ -853,7 +861,7 @@
         if (e.key === "ArrowLeft"  || e.key === "a" || e.key === "A") { e.preventDefault(); _corkboardNav(-1); return; }
         if (e.key === "Escape") {
           if (journalOpen) { journalOpen = false; return; }
-          menuPhase = "title"; titleScreenActive = true; return;
+          menuPhase = "corkboard"; titleScreenActive = true; return;
         }
         if (e.key.toLowerCase() === keybinds.journal) { journalOpen = !journalOpen; return; }
         if ((e.key === "Enter" || e.key === " ") && _corkboardPage === 2) { e.preventDefault(); _startGame(); }
@@ -1317,8 +1325,9 @@
     let playerAngle   = Math.PI / 2; // facing south by default (player starts in van, exits east)
     let mouseX = canvas.width / 2, mouseY = canvas.height / 2; // screen coords
     let flashlightOn  = true;
-    let walkCycle = 0;       // 0..1 walk phase, increments while moving
-    let isMoving  = false;   // true this frame if player moved
+    let walkCycle    = 0;        // 0..2π walk phase, increments while moving
+    let isMoving     = false;    // true this frame if player moved
+    let playerFacing = "down";   // "down"|"up"|"left"|"right" — directional sprite selector
 
     // Stamina system
     const STAMINA_MAX           = 3.0;  // seconds of full sprint
@@ -2784,6 +2793,29 @@
       else if (canMoveTo(player.x, ny))   { player.y = ny; }
       isMoving = (dx !== 0 || dy !== 0);
       if (isMoving) walkCycle = (walkCycle + 0.12) % (Math.PI * 2);
+
+      // Snap playerAngle to 4-directional facing for sprite selection
+      {
+        let a = playerAngle;
+        while (a >  Math.PI) a -= Math.PI * 2;
+        while (a < -Math.PI) a += Math.PI * 2;
+        // Hysteresis: only switch direction when angle passes 10° beyond the boundary
+        const D = 0.18; // ~10° deadzone on each boundary
+        const newFacing =
+          (a >= -(Math.PI/4+D) && a <  (Math.PI/4+D))  ? "right" :
+          (a >=  (Math.PI/4-D) && a <  (3*Math.PI/4+D)) ? "down"  :
+          (a >= -(3*Math.PI/4+D) && a < -(Math.PI/4-D)) ? "up"    : "left";
+        if (newFacing !== playerFacing) {
+          // Only commit the change if the new direction's core zone is clearly entered
+          const core = Math.PI/4;
+          const inCore =
+            (newFacing === "right" && (a >= -core && a < core)) ||
+            (newFacing === "down"  && (a >= core  && a < Math.PI - core)) ||
+            (newFacing === "up"    && (a >= -(Math.PI - core) && a < -core)) ||
+            (newFacing === "left"  && (a < -(Math.PI - core) || a >= Math.PI - core));
+          if (inCore) playerFacing = newFacing;
+        }
+      }
 
       // Update rain particles (scroll down + slight right drift; wrap around)
       if (ENV[envModes[envModeIdx]].rain) {
@@ -4287,65 +4319,179 @@
         ctx.beginPath(); ctx.arc(cx + Math.cos(f)*8, cy + Math.sin(f)*8, 3, 0, Math.PI*2); ctx.fill();
       }
 
-      // Player — top-down person sprite with walk animation
+      // Player — directional sprite system (4 directions, no rotation)
       const pcx = player.x + player.width  / 2;
       const pcy = player.y + player.height / 2;
-      const legSwing  = isMoving ? Math.sin(walkCycle) * 4 : 0;
-      const armSwing  = isMoving ? -Math.sin(walkCycle) * 3 : 0; // opposite legs
+      const legSwing  = isMoving ? Math.sin(walkCycle) * 3.5 : 0;
+      const armSwing  = isMoving ? -Math.sin(walkCycle) * 2.5 : 0;
+      const heldName  = inventory[selectedSlot];
+      const holdingItem = !!(heldName || hasLighter);
+      const fArmSwing = holdingItem ? 0 : armSwing; // front/right arm stiffens when holding
+
+      // Sprite palette — 3-tone shading per region, warm reference-matched colors
+      const SKH = "#f2c890";                              // skin: warm highlight (top-lit)
+      const SK  = "#e0a870", SKS = "#c07848";             // skin: base, shadow
+      const SKD = "#804028";                              // skin: dark outline/crease
+      const JKH = "#5878a0";                              // jacket: bright shoulder highlight
+      const JK  = "#2e4060", JKD = "#182438";             // jacket: base, shadow
+      const JKO = "#101820";                              // jacket: pixel outline
+      const CL  = "#3a5070";                              // collar: mid-tone between JK and JKH
+      const TRH = "#4a3420";                              // trousers: highlight (outer leg, top-lit)
+      const TR  = "#3a2818", TRD = "#1e1008";             // trousers: base, shadow
+      const SH  = "#1a1008", SHH = "#2e2018";             // shoes: base, top-highlight
+      const HRL = "#4a3018";                              // hair: highlight (lighter crown)
+      const HR  = "#2a1808";                              // hair: base/shadow
+      const OUT = "#100808";                              // universal dark outline
+      // Short helper — avoids repeating ctx.fillStyle+fillRect
+      function _pr(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); }
 
       ctx.save();
       ctx.translate(pcx, pcy);
-      ctx.rotate(playerAngle - Math.PI / 2);
+      // NO rotation — each direction is a distinct sprite, not a rotated copy
 
-      // Shadow
-      ctx.fillStyle = "rgba(0,0,0,0.35)";
-      ctx.beginPath(); ctx.ellipse(1, 2, 9, 5, 0, 0, Math.PI*2); ctx.fill();
+      // Ground shadow
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ctx.beginPath(); ctx.ellipse(0, 7, 9, 4, 0, 0, Math.PI*2); ctx.fill();
 
-      // Legs
-      ctx.fillStyle = "#3a2818"; // trousers
-      ctx.fillRect(-4, 3 + legSwing, 3, 6);
-      ctx.fillRect( 1, 3 - legSwing, 3, 6);
-      ctx.fillStyle = "#1a1008"; // shoes
-      ctx.fillRect(-4, 8 + legSwing, 3, 2);
-      ctx.fillRect( 1, 8 - legSwing, 3, 2);
+      if (playerFacing === "down") {
+        // ── FRONT VIEW ──────────────────────────────────────────────────
+        // Legs — 3 tones: outer highlight, base, inner/bottom shadow
+        _pr(-5, 4 + legSwing, 4, 7, TR);  _pr(-5, 4 + legSwing, 1, 7, TRH); _pr(-2, 4 + legSwing, 1, 7, TRD); _pr(-5, 10 + legSwing, 4, 1, TRD);
+        _pr( 1, 4 - legSwing, 4, 7, TR);  _pr( 4, 4 - legSwing, 1, 7, TRH); _pr( 1, 4 - legSwing, 1, 7, TRD); _pr( 1, 10 - legSwing, 4, 1, TRD);
+        // Shoes
+        _pr(-6, 10 + legSwing, 5, 3, SH); _pr(-6, 10 + legSwing, 5, 1, SHH);
+        _pr( 1, 10 - legSwing, 5, 3, SH); _pr( 1, 10 - legSwing, 5, 1, SHH);
+        // Arms — 3 tones
+        _pr(-9, -3 + armSwing,  4, 8, JK); _pr(-9, -3 + armSwing, 1, 8, JKH); _pr(-6, -3 + armSwing, 1, 8, JKD);
+        _pr( 5, -3 + fArmSwing, 4, 8, JK); _pr( 8, -3 + fArmSwing, 1, 8, JKH); _pr( 5, -3 + fArmSwing, 1, 8, JKD);
+        // Hands — 3 tones
+        _pr(-9,  4 + armSwing,  4, 3, SK);  _pr(-9, 4 + armSwing, 4, 1, SKH); _pr(-9, 6 + armSwing, 4, 1, SKS);
+        _pr( 5,  4 + fArmSwing, 4, 3, SK);  _pr( 5, 4 + fArmSwing, 4, 1, SKH); _pr( 5, 6 + fArmSwing, 4, 1, SKS);
+        // Body — 3 tones
+        _pr(-5, -6, 10, 11, JK);
+        _pr(-5, -6, 10,  3, JKH);
+        _pr(-4, -4,  8,  2, JK);
+        _pr(-5,  3, 10,  3, JKD);
+        _pr(-1, -6,  2, 11, JKD);
+        _pr(-5, -6,  1, 11, JKO); _pr(4, -6, 1, 11, JKO);
+        // Collar — visible band at jacket top, separates neck from body clearly
+        _pr(-3, -7, 6, 2, CL); _pr(-3, -7, 6, 1, JKH); _pr(-3, -6, 6, 1, JKD);
+        // Neck — skin between collar and head
+        _pr(-1, -8, 3, 2, SK); _pr(-1, -8, 3, 1, SKH); _pr(-1, -7, 3, 1, SKS);
+        // Head base
+        ctx.fillStyle = SK; ctx.beginPath(); ctx.ellipse(0, -13, 6, 6, 0, 0, Math.PI*2); ctx.fill();
+        // Chin shadow (lower half)
+        ctx.fillStyle = SKS; ctx.beginPath(); ctx.ellipse(0, -11.5, 5.5, 3.5, 0, 0, Math.PI); ctx.fill();
+        // Forehead highlight (top-lit upper quarter)
+        ctx.fillStyle = SKH; ctx.beginPath(); ctx.ellipse(0, -15.5, 4, 2, 0, Math.PI, 0); ctx.fill();
+        // Head outline
+        ctx.strokeStyle = SKD; ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.ellipse(0, -13, 6, 6, 0, 0, Math.PI*2); ctx.stroke();
+        // Hair — 2 tones: base + crown highlight
+        ctx.fillStyle = HR;  ctx.beginPath(); ctx.ellipse(0, -15, 6, 3.5, 0, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = HRL; ctx.beginPath(); ctx.ellipse(0, -15.5, 3.5, 2, 0, Math.PI, 0); ctx.fill(); // sheen
+        _pr(-6, -17, 2, 6, HR); _pr(4, -17, 2, 6, HR); // side hair drapes
+        // Ears — 3-tone
+        _pr(-7, -15, 2, 4, SK); _pr(-7, -14, 1, 2, SKS); _pr(-7, -13, 2, 1, SKD);
+        _pr( 5, -15, 2, 4, SK); _pr( 5, -14, 1, 2, SKS); _pr( 5, -13, 2, 1, SKD);
+        // Eyes + shine
+        _pr(-3, -14, 2, 2, OUT); _pr(1, -14, 2, 2, OUT);
+        _pr(-2.5, -14.5, 1, 1, "#fff"); _pr(1.5, -14.5, 1, 1, "#fff");
+        // Nose bridge + nostril
+        _pr(-0.5, -13, 1, 2, SKS); _pr(-1, -11.5, 3, 1, SKD);
+        // Mouth hint
+        _pr(-1.5, -10.5, 3, 1, SKS);
 
-      // Arms — right arm stiffens when holding an item
-      const heldName = inventory[selectedSlot];
-      const holdingItem = !!(heldName || hasLighter);
-      const rightSwing = holdingItem ? 0 : armSwing;
-      ctx.fillStyle = "#2e4060"; // jacket sleeves
-      ctx.fillRect(-8, -1 + armSwing,  3, 6);
-      ctx.fillRect( 5, -2 + rightSwing, 3, 6);
-      ctx.fillStyle = "#d4a574"; // hands
-      ctx.fillRect(-8, 4 + armSwing,   3, 2);
-      ctx.fillRect( 5, 3 + rightSwing, 3, 2);
+      } else if (playerFacing === "up") {
+        // ── BACK VIEW ───────────────────────────────────────────────────
+        // Legs — 3 tones
+        _pr(-5, 4 + legSwing, 4, 7, TR);  _pr(-5, 4 + legSwing, 1, 7, TRH); _pr(-2, 4 + legSwing, 1, 7, TRD); _pr(-5, 10 + legSwing, 4, 1, TRD);
+        _pr( 1, 4 - legSwing, 4, 7, TR);  _pr( 4, 4 - legSwing, 1, 7, TRH); _pr( 1, 4 - legSwing, 1, 7, TRD); _pr( 1, 10 - legSwing, 4, 1, TRD);
+        _pr(-6, 10 + legSwing, 5, 3, SH); _pr(-6, 10 + legSwing, 5, 1, SHH);
+        _pr( 1, 10 - legSwing, 5, 3, SH); _pr( 1, 10 - legSwing, 5, 1, SHH);
+        // Arms — 3 tones
+        _pr(-9, -3 + armSwing,  4, 8, JK); _pr(-9, -3 + armSwing, 1, 8, JKH); _pr(-6, -3 + armSwing, 1, 8, JKD);
+        _pr( 5, -3 + fArmSwing, 4, 8, JK); _pr( 8, -3 + fArmSwing, 1, 8, JKH); _pr( 5, -3 + fArmSwing, 1, 8, JKD);
+        _pr(-9, 4 + armSwing, 4, 3, SK);  _pr(-9, 4 + armSwing, 4, 1, SKH);
+        _pr( 5, 4 + fArmSwing, 4, 3, SK); _pr( 5, 4 + fArmSwing, 4, 1, SKH);
+        // Body — 3 tones
+        _pr(-5, -6, 10, 11, JK);
+        _pr(-5, -6, 10,  3, JKH);
+        _pr(-4, -4,  8,  2, JK);
+        _pr(-5,  3, 10,  3, JKD);
+        _pr(-1, -6,  2, 11, JKD);
+        _pr(-5, -6,  1, 11, JKO); _pr(4, -6, 1, 11, JKO);
+        // Collar back — small band, darker (in shadow facing away)
+        _pr(-3, -7, 6, 2, JKD); _pr(-3, -7, 6, 1, CL);
+        // Neck — darker since facing away
+        _pr(-1, -8, 3, 2, SKS); _pr(-1, -8, 3, 1, SK);
+        // Head — all hair
+        ctx.fillStyle = HR; ctx.beginPath(); ctx.ellipse(0, -13, 6, 6, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = HRL; ctx.beginPath(); ctx.ellipse(0, -15.5, 3.5, 2.5, 0, Math.PI, 0); ctx.fill(); // hair sheen
+        ctx.strokeStyle = SKD; ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.ellipse(0, -13, 6, 6, 0, 0, Math.PI*2); ctx.stroke();
 
-      // Body (jacket)
-      ctx.fillStyle = "#2e4060";
-      ctx.fillRect(-5, -5, 10, 9);
-      ctx.fillStyle = "#3a5278"; ctx.fillRect(-5, -5, 10, 3); // shoulder highlight
-      ctx.fillStyle = "#253450"; ctx.fillRect(-1, -5,  2, 9); // zipper stripe
+      } else {
+        // ── SIDE VIEW (drawn facing left; ctx.scale(-1,1) for right) ────
+        ctx.save();
+        if (playerFacing === "right") ctx.scale(-1, 1);
+        const lFwd = legSwing;
+        // Back leg (behind, darker)
+        _pr(1, 4 + lFwd,  3, 7, TRD);
+        _pr(0, 10 + lFwd, 4, 3, "#0e0806");
+        // Front leg — 3 tones: top highlight, base, inner shadow
+        _pr(-4, 4 - lFwd, 4, 7, TR); _pr(-4, 4 - lFwd, 1, 7, TRH); _pr(-1, 4 - lFwd, 1, 7, TRD);
+        _pr(-5, 10 - lFwd, 5, 3, SH); _pr(-5, 10 - lFwd, 5, 1, SHH);
+        // Back arm (in shadow behind body)
+        _pr(2, -3, 3, 7, JKD); _pr(2, 4, 3, 3, SKS);
+        // Body — 3 tones
+        _pr(-4, -6, 9, 11, JK);
+        _pr(-4, -6, 9,  3, JKH);
+        _pr(-3, -4, 7,  2, JK);
+        _pr(-4,  3, 9,  3, JKD);
+        _pr(-4, -6, 1, 11, JKO); _pr(4, -6, 1, 11, JKO);
+        // Collar — side view shows the front edge
+        _pr(-4, -7, 5, 2, CL); _pr(-4, -7, 5, 1, JKH); _pr(-4, -6, 5, 1, JKD);
+        // Neck — skin above collar
+        _pr(-2, -8, 3, 2, SK); _pr(-2, -8, 3, 1, SKH); _pr(-2, -7, 3, 1, SKS);
+        // Front arm — 3 tones
+        _pr(-8, -3 + fArmSwing, 4, 8, JK);
+        _pr(-8, -3 + fArmSwing, 1, 8, JKH);
+        _pr(-5, -3 + fArmSwing, 1, 8, JKD);
+        // Hand — 3 tones
+        _pr(-8,  4 + fArmSwing, 4, 3, SK);
+        _pr(-8,  4 + fArmSwing, 4, 1, SKH);
+        _pr(-8,  6 + fArmSwing, 4, 1, SKS);
+        // Head (profile) — SK base with far-side shadow
+        ctx.fillStyle = SK; ctx.beginPath(); ctx.ellipse(-1, -13, 5, 6, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = SKS; ctx.beginPath(); ctx.ellipse(1.5, -13, 3, 4.5, 0, 0, Math.PI*2); ctx.fill(); // far shadow
+        // Forehead highlight (top-lit)
+        ctx.fillStyle = SKH; ctx.beginPath(); ctx.ellipse(-2, -16, 3, 1.5, 0, Math.PI, 0); ctx.fill();
+        ctx.strokeStyle = SKD; ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.ellipse(-1, -13, 5, 6, 0, 0, Math.PI*2); ctx.stroke();
+        // Hair — 2 tones, covers back half + crown
+        ctx.fillStyle = HR;
+        ctx.beginPath(); ctx.ellipse(1.5, -13.5, 4.5, 5.5, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(-1, -16, 4.5, 3, 0, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = HRL; ctx.beginPath(); ctx.ellipse(0, -16, 3, 1.8, 0, Math.PI, 0); ctx.fill(); // hair sheen
+        // Near-side ear — 3 tones
+        _pr(-6, -15, 2, 4, SK); _pr(-6, -14, 1, 2, SKS); _pr(-6, -13, 2, 1, SKD);
+        // Eye + shine
+        _pr(-4, -14, 2, 2, OUT); _pr(-3.5, -14.5, 1, 1, "#fff");
+        // Nose bump + nostril
+        _pr(-6, -12, 3, 1, SKH); _pr(-6, -11, 2, 1, SKD);
+        ctx.restore(); // undo side-view flip
+      }
 
-      // Head
-      ctx.fillStyle = "#d4a574";
-      ctx.beginPath(); ctx.ellipse(0, -8, 4.5, 4, 0, 0, Math.PI*2); ctx.fill();
-      // Hair (dark arc over top half of head)
-      ctx.fillStyle = "#2a1808";
-      ctx.beginPath(); ctx.ellipse(0, -10, 4.5, 2.5, 0, Math.PI, 0); ctx.fill();
-      // Ears
-      ctx.fillStyle = "#c49060";
-      ctx.fillRect(-6, -9, 2, 3);
-      ctx.fillRect( 4, -9, 2, 3);
-      // Eyes
-      ctx.fillStyle = "#1a0e06";
-      ctx.fillRect(-2,   -9, 1.5, 1.5);
-      ctx.fillRect( 0.5, -9, 1.5, 1.5);
-
-      // Held item — drawn at right-hand position, scaled up for readability
+      // Held item — position varies by facing direction
       if (heldName) {
         ctx.save();
-        ctx.translate(7, -3); // right hand position
-        ctx.scale(0.65, 0.65); // in-world hand item ~half player size
+        // Place item at the front/right hand for each sprite direction
+        if      (playerFacing === "down")  { ctx.translate( 7,  0); }
+        else if (playerFacing === "up")    { ctx.translate( 7,  0); }
+        else if (playerFacing === "right") { ctx.translate(-9, -1); ctx.scale(-1, 1); }
+        else                              { ctx.translate(-9, -1); }
+        ctx.scale(0.65, 0.65);
 
         if (heldName === "Flashlight") {
           // Off: dark lens.  On: bright glowing lens + warm halo
@@ -4596,7 +4742,10 @@
 
       } else if (hasLighter) {
         ctx.save();
-        ctx.translate(7, -3);
+        if      (playerFacing === "down")  { ctx.translate( 7,  0); }
+        else if (playerFacing === "up")    { ctx.translate( 7,  0); }
+        else if (playerFacing === "right") { ctx.translate(-9, -1); ctx.scale(-1, 1); }
+        else                              { ctx.translate(-9, -1); }
         ctx.scale(0.65, 0.65);
         ctx.fillStyle = "#c8a820"; ctx.fillRect(-2.5,-4,6,8);        // body
         ctx.fillStyle = "#e0c040"; ctx.fillRect(-1.5,-3,4,6);        // face sheen
@@ -8619,7 +8768,7 @@
         ? _profLogin(_profUser, _profPass)
         : _profCreate(_profUser, _profPass, _profConfirm);
       if (err) { _profError = err; return; }
-      menuPhase = "title"; titleScreenActive = true;
+      menuPhase = "corkboard"; titleScreenActive = true;
     }
 
     function drawMenuProfile() {
@@ -8777,6 +8926,190 @@
     }
 
     // ── drawMenuTitle: haunted identity / start screen ────────────────────────
+    function drawIntro() {
+      const W = canvas.width, H = canvas.height;
+
+      // Advance phase timer
+      _introT += 1 / 60; // ~60fps assumption; good enough for a simple fade
+      const dur = INTRO_DUR[_introPhase] || 0.6;
+
+      // Compute alpha for current phase
+      if (_introPhase === 0) {           // "Haunted" fade-in
+        _introAlpha = Math.min(1, _introT / dur);
+      } else if (_introPhase === 1) {    // hold at full opacity
+        _introAlpha = 1;
+      } else if (_introPhase === 2) {    // "Haunted" fade-out
+        _introAlpha = Math.max(0, 1 - _introT / dur);
+      } else if (_introPhase === 3) {    // "Ryan's" fade-in
+        _introAlpha = Math.min(1, _introT / dur);
+      } else if (_introPhase === 4) {    // hold
+        _introAlpha = 1;
+      } else if (_introPhase === 5) {    // "Ryan's" fade-out
+        _introAlpha = Math.max(0, 1 - _introT / dur);
+      }
+
+      // Advance to next phase when timer expires
+      if (_introT >= dur) {
+        _introT = 0;
+        _introPhase++;
+        if (_introPhase >= 6) {
+          // Intro done — route based on auth state determined at startup
+          menuPhase = _introPostAuth || "profile";
+          titleScreenActive = (menuPhase !== "profile");
+          return;
+        }
+      }
+
+      // Draw
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.save();
+      ctx.globalAlpha = _introAlpha;
+      ctx.textAlign = "center";
+
+      if (_introPhase < 3) {
+        // ── "Haunted" full title card (no start button) ─────────────────
+        // Scan-line grain
+        ctx.strokeStyle = `rgba(140,80,20,${0.045 * _introAlpha})`; ctx.lineWidth = 1;
+        for (let gy = 0; gy < H; gy += 9) {
+          ctx.beginPath();
+          ctx.moveTo(0, gy + Math.sin(gy*0.14)*1.5);
+          ctx.lineTo(W, gy + Math.sin(gy*0.14+1.6)*1.5);
+          ctx.stroke();
+        }
+        // Radial vignette
+        const vig = ctx.createRadialGradient(W/2, H/2, H*0.18, W/2, H/2, H*0.85);
+        vig.addColorStop(0, "rgba(0,0,0,0)");
+        vig.addColorStop(1, `rgba(0,0,0,${0.82 * _introAlpha})`);
+        ctx.fillStyle = vig; ctx.fillRect(0, 0, W, H);
+
+        // Decorative rules
+        ctx.strokeStyle = `rgba(180,130,40,${0.18 * _introAlpha})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(60, 130); ctx.lineTo(W-60, 130); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(60, 420); ctx.lineTo(W-60, 420); ctx.stroke();
+
+        // Case file line
+        ctx.fillStyle = `rgba(106,88,40,${_introAlpha})`;
+        ctx.font = "9px monospace"; ctx.textAlign = "center";
+        ctx.fillText("CASE FILE  #0001  ·  PARANORMAL INVESTIGATION UNIT", W/2, 116);
+
+        // Production credit
+        ctx.fillStyle = `rgba(120,100,60,${0.55 * _introAlpha})`;
+        ctx.font = "8px monospace";
+        ctx.fillText("A  RYAN  GAME  CO.  PRODUCTION", W/2, 96);
+
+        // Main title glow
+        ctx.shadowColor = `rgba(232,201,80,${0.6 * _introAlpha})`; ctx.shadowBlur = 36;
+        ctx.fillStyle = `rgba(240,216,112,${_introAlpha})`;
+        ctx.font = "bold 72px Georgia, serif";
+        ctx.fillText("HAUNTED", W/2, 224);
+        ctx.shadowBlur = 0;
+
+        // Subtitle
+        ctx.fillStyle = `rgba(138,112,64,${_introAlpha})`;
+        ctx.font = "italic 13px Georgia, serif";
+        ctx.fillText("Something is still in the house.", W/2, 260);
+
+        ctx.strokeStyle = `rgba(180,130,40,${0.14 * _introAlpha})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(W/2-120, 276); ctx.lineTo(W/2+120, 276); ctx.stroke();
+
+        ctx.fillStyle = `rgba(90,72,40,${_introAlpha})`;
+        ctx.font = "10px monospace";
+        ctx.fillText("INVESTIGATE  ·  IDENTIFY  ·  ESCAPE", W/2, 298);
+
+        // Flavor text
+        ctx.fillStyle = `rgba(58,46,24,${_introAlpha})`;
+        ctx.font = "italic 10px Georgia, serif";
+        ctx.fillText("Reports of unexplained activity. No prior team has returned a confirmed ID.", W/2, 346);
+        ctx.fillText("Your objective: gather evidence, identify the entity, and get out alive.", W/2, 364);
+
+        // Bottom strip (no start button)
+        ctx.strokeStyle = `rgba(180,130,40,${0.12 * _introAlpha})`; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(60, 524); ctx.lineTo(W-60, 524); ctx.stroke();
+        ctx.fillStyle = `rgba(58,46,24,${_introAlpha})`;
+        ctx.font = "8px monospace"; ctx.textAlign = "center";
+        ctx.fillText("PARANORMAL  INVESTIGATION  UNIT", W/2, 546);
+      } else {
+        // ── Kairo Software Company logo card ───────────────────────────
+        const cx = W / 2, cy = H / 2 - 60;
+        const R  = 92; // gear outer radius
+
+        // ── Gear ──
+        const teeth = 14, toothH = 11, toothW = 0.16;
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        for (let i = 0; i < teeth; i++) {
+          const a0 = (i / teeth) * Math.PI * 2 - Math.PI / 2;
+          const a1 = a0 + toothW;
+          const a2 = a0 + Math.PI / teeth - toothW;
+          const a3 = a0 + Math.PI / teeth;
+          ctx.arc(cx, cy, R - toothH, a0, a1);
+          ctx.lineTo(cx + Math.cos(a1) * R, cy + Math.sin(a1) * R);
+          ctx.lineTo(cx + Math.cos(a2) * R, cy + Math.sin(a2) * R);
+          ctx.arc(cx, cy, R - toothH, a2, a3);
+        }
+        ctx.closePath(); ctx.fill();
+
+        // Clock face — dark fill + double ring
+        const IR = R - toothH - 3;
+        ctx.fillStyle = "#111";
+        ctx.beginPath(); ctx.arc(cx, cy, IR, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(cx, cy, IR, 0, Math.PI * 2); ctx.stroke();
+        ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(cx, cy, IR - 6, 0, Math.PI * 2); ctx.stroke();
+
+        // Hour tick marks
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+        for (let t = 0; t < 12; t++) {
+          const ta = (t / 12) * Math.PI * 2 - Math.PI / 2;
+          const isTick = (t % 3 === 0);
+          const r1 = IR - 8, r2 = IR - (isTick ? 18 : 12);
+          ctx.lineWidth = isTick ? 2 : 1.2;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(ta) * r1, cy + Math.sin(ta) * r1);
+          ctx.lineTo(cx + Math.cos(ta) * r2, cy + Math.sin(ta) * r2);
+          ctx.stroke();
+        }
+
+        // Hour hand (~10 o'clock)
+        const hAngle = -Math.PI * 0.6;
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(hAngle) * (IR * 0.52), cy + Math.sin(hAngle) * (IR * 0.52));
+        ctx.stroke();
+
+        // Minute hand (~2 o'clock)
+        const mAngle = Math.PI * 0.18;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(mAngle) * (IR * 0.72), cy + Math.sin(mAngle) * (IR * 0.72));
+        ctx.stroke();
+        ctx.lineCap = "butt";
+
+        // Center dot
+        ctx.fillStyle = "#fff";
+        ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.fill();
+
+        // ── "KAIRO" text ──
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 58px Georgia, serif";
+        ctx.fillText("KAIRO", W / 2, cy + R + 32);
+
+        // ── "A SOFTWARE COMPANY" subtitle ──
+        ctx.fillStyle = "rgba(255,255,255,0.75)";
+        ctx.font = "12px Georgia, serif";
+        ctx.letterSpacing = "4px";
+        ctx.fillText("A  SOFTWARE  COMPANY", W / 2, cy + R + 56);
+        ctx.letterSpacing = "0px";
+      }
+
+      ctx.restore();
+    }
+
     function drawMenuTitle() {
       const W = canvas.width, H = canvas.height;
       ctx.fillStyle = "#06050302";
@@ -8805,8 +9138,12 @@
       ctx.beginPath(); ctx.moveTo(60, 130); ctx.lineTo(W-60, 130); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(60, 420); ctx.lineTo(W-60, 420); ctx.stroke();
 
-      // ── Paranormal case file number ──
+      // ── Production credit ──
       ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(120,100,60,0.55)"; ctx.font = "8px monospace";
+      ctx.fillText("A  RYAN  GAME  CO.  PRODUCTION", W/2, 96);
+
+      // ── Paranormal case file number ──
       ctx.fillStyle = "#6a5828"; ctx.font = "9px monospace";
       ctx.fillText("CASE FILE  #0001  ·  PARANORMAL INVESTIGATION UNIT", W/2, 116);
 
@@ -11422,7 +11759,8 @@
 
     // --- Game Loop ---
     function loop() {
-      if (menuPhase === "profile")    { drawMenuProfile(); }
+      if (menuPhase === "intro")      { drawIntro(); }
+      else if (menuPhase === "profile")    { drawMenuProfile(); }
       else if (menuPhase === "title")      { drawMenuTitle(); }
       else if (menuPhase === "corkboard") { drawMenuCorkboard(); if (journalOpen) drawJournal(); }
       else if (lostRound)     drawLose();
@@ -11448,7 +11786,7 @@
       requestAnimationFrame(loop); // always keep running
     }
 
-    // Auto-login returning players; fall back to pre-filling username field
+    // Auto-login returning players; store post-intro destination, never skip the intro
     (function() {
       try {
         const session = localStorage.getItem(PRU_SESSION_KEY);
@@ -11456,7 +11794,7 @@
           const all = _profLoadAll();
           if (all[session]) {
             _profApply(all[session]);
-            menuPhase = "title"; titleScreenActive = true;
+            _introPostAuth = "corkboard"; // logged in — skip title, go straight to corkboard
             return;
           }
           // Session key points to deleted profile — clear it
@@ -11464,7 +11802,10 @@
         }
         const last = localStorage.getItem(PRU_LASTUSER_KEY);
         if (last) { _profUser = last; _profFocus = "pass"; }
-      } catch {}
+        _introPostAuth = "profile"; // not logged in — go to login after intro
+      } catch {
+        _introPostAuth = "profile";
+      }
     })();
     // Start the loop — profile screen first, then title after login
     loopRunning = true;

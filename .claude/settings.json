@@ -6,7 +6,8 @@
       "Read(//tmp/**)",
       "Bash(python3 -:*)",
       "Bash(grep -v \"^.*//.*$\")",
-      "Bash(python3 -c \":*)"
+      "Bash(python3 -c \":*)",
+      "Bash(grep -n 'menuPhase = \"\"title\"\"' /Users/cashcrunk/my-game/Haunted/index.html)"
     ]
   }
 }
