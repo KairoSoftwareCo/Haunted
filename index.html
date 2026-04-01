@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <title>Horror Game</title>
+  <title>Haunted</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000;
@@ -48,7 +48,9 @@
 
   <script>
     const canvas = document.getElementById("gameCanvas");
+    canvas.style.imageRendering = "pixelated";
     const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
 
     canvas.width  = 800;
     canvas.height = 600;
@@ -205,7 +207,7 @@
 
     // --- Screen state ---
     // menuPhase: "intro" = opening sequence | "title" = haunted identity screen | "corkboard" = setup menu | null = in-game
-    let menuPhase      = "intro"; // starts with intro sequence; routes to profile or title after
+    let menuPhase      = null; // DEV: skip intro — change back to "intro" for full experience
 
     // Intro sequence state
     let _introPhase    = 0;      // 0="Haunted" fade-in, 1=hold, 2=fade-out, 3="Ryan's" fade-in, 4=hold, 5=fade-out, 6=done
@@ -220,6 +222,7 @@
     let _selectedMapId    = 0;      // which map is highlighted (0 = The Farmhouse)
     let _titleMx = 0, _titleMy = 0; // canvas-space mouse position for hover states
     let _titleStartRect   = null;   // start button rect (title screen), set each frame
+    let _titleCreditsRect = null;   // credits button rect (title screen), set each frame
     let _titleBeginRect   = null;   // "begin investigation" rect (corkboard page 2)
     let _photoRect        = null;   // ID card photo clickable rect (corkboard page 2)
     let _agentPortrait    = 0;      // 0–5: which of the 6 portraits is shown
@@ -265,6 +268,7 @@
     let _journalLogoutNoRect   = null;
     let gameRunning  = false;
     let roundOver    = false;
+    let housePowerOn = false; // breaker state — controls whether room lights can illuminate
     let guessCorrect = false;
     let loopRunning  = false;
     let journalOpen    = false;
@@ -360,6 +364,125 @@
     let corkBoardOpen    = false; // van cork board popup
     let pegScrollX     = 0;    // horizontal scroll offset for the equipment board
     let gameZoom       = 1.8;  // main gameplay zoom (player/world view only)
+    // Player sprite sheet — idle (1 frame per direction) + walk (6 frames per direction)
+    // 8 directions: south, south-east, east, north-east, north, north-west, west, south-west
+    const _DIRS8 = ["south","south-east","east","north-east","north","north-west","west","south-west"];
+    const _spriteIdle = {};
+    const _spriteWalk = {};
+    _DIRS8.forEach(d => {
+      const img = new Image(); img.src = `sprites/player/rotations/${d}.png`;
+      _spriteIdle[d] = img;
+      _spriteWalk[d] = [];
+      for (let i = 0; i < 6; i++) {
+        const f = new Image(); f.src = `sprites/player/animations/walk/${d}/frame_00${i}.png`;
+        _spriteWalk[d].push(f);
+      }
+    });
+    // Map continuous angle to nearest of 8 directions with hysteresis (12° dead zone past boundaries)
+    function _angleToDir8(angle) {
+      const a = ((angle * 180 / Math.PI) % 360 + 360) % 360;
+      const D = 12; // dead zone — must cross this many degrees past boundary before switching
+      const dirs = ["east","south-east","south","south-west","west","north-west","north","north-east"];
+      const centers = [0, 45, 90, 135, 180, 225, 270, 315];
+      const curIdx = dirs.indexOf(_lastDir8);
+      const center = centers[curIdx];
+      let diff = a - center;
+      if (diff > 180) diff -= 360;
+      if (diff < -180) diff += 360;
+      if (Math.abs(diff) < 22.5 + D) return _lastDir8; // still within hysteresis — keep current
+      // Far enough past boundary — pick new closest direction
+      let best = 0, bestDist = 999;
+      for (let i = 0; i < 8; i++) {
+        let d = Math.abs(a - centers[i]);
+        if (d > 180) d = 360 - d;
+        if (d < bestDist) { bestDist = d; best = i; }
+      }
+      _lastDir8 = dirs[best];
+      return _lastDir8;
+    }
+    let _spriteFrame = 0;       // current walk frame index (0-5)
+    let _spriteFrameTimer = 0;  // counts up to SPRITE_FRAME_SPEED then advances frame
+    const SPRITE_FRAME_SPEED = 6; // game frames per animation frame
+
+    // Ghost sprites — 8 directions, idle + 6-frame walk
+    const _ghostSpriteIdle = {}, _ghostSpriteWalk = {};
+    _DIRS8.forEach(d => {
+      const img = new Image(); img.src = `sprites/ghost/rotations/${d}.png`;
+      _ghostSpriteIdle[d] = img;
+      _ghostSpriteWalk[d] = [];
+      for (let i = 0; i < 6; i++) {
+        const f = new Image(); f.src = `sprites/ghost/animations/walk/${d}/frame_00${i}.png`;
+        _ghostSpriteWalk[d].push(f);
+      }
+    });
+    let _ghostSpriteFrame = 0, _ghostSpriteTimer = 0;
+
+    // Van interior sprites
+    const _vanMonitorsImg = new Image(); _vanMonitorsImg.src = "sprites/van/monitors.png";
+    const _vanPegboardImg = new Image(); _vanPegboardImg.src = "sprites/van/pegboard.png";
+
+    // ── Tileset sprites (64×64 Wang sheets; solid tile at sx=0,sy=48,sw=16,sh=16) ──
+    const _tileSize = 16;
+    const _tileSolidSX = 0, _tileSolidSY = 48; // all-upper corner tile position
+
+    function _makeTilePattern(src) {
+      // Returns an object {img, pat} — pat is lazily created on first draw
+      const obj = { img: new Image(), pat: null };
+      obj.img.src = src;
+      obj.img.onload = () => { obj.pat = null; }; // reset pat so it's rebuilt after load
+      return obj;
+    }
+    const _tileWood     = _makeTilePattern("sprites/tiles/floor_wood.png");
+    const _tileBath     = _makeTilePattern("sprites/tiles/floor_bath.png");
+    const _tileConcrete = _makeTilePattern("sprites/tiles/floor_concrete.png");
+    const _tileGrass    = _makeTilePattern("sprites/tiles/floor_grass.png");
+    const _tileWall     = _makeTilePattern("sprites/tiles/wall.png");
+    const _tileVan      = _makeTilePattern("sprites/tiles/floor_van.png");
+
+    // Extract the solid tile from a tileset sheet into a small offscreen canvas,
+    // then create a repeating CanvasPattern from it for ctx.fillStyle.
+    function _getTilePattern(tileObj, drawCtx) {
+      if (tileObj.pat) return tileObj.pat;
+      if (!tileObj.img.complete || !tileObj.img.naturalWidth) return null;
+      const oc = document.createElement("canvas");
+      oc.width = _tileSize; oc.height = _tileSize;
+      const oc2d = oc.getContext("2d");
+      oc2d.imageSmoothingEnabled = false;
+      oc2d.drawImage(tileObj.img, _tileSolidSX, _tileSolidSY, _tileSize, _tileSize, 0, 0, _tileSize, _tileSize);
+      tileObj.pat = drawCtx.createPattern(oc, "repeat");
+      return tileObj.pat;
+    }
+
+    // Fill a rect with a tiled pattern; falls back to flatColor if not loaded yet.
+    function _fillTiled(drawCtx, tileObj, flatColor, x, y, w, h) {
+      const pat = _getTilePattern(tileObj, drawCtx);
+      if (pat) {
+        drawCtx.save();
+        drawCtx.translate(x, y);
+        drawCtx.fillStyle = pat;
+        drawCtx.fillRect(0, 0, w, h);
+        drawCtx.restore();
+      } else {
+        drawCtx.fillStyle = flatColor;
+        drawCtx.fillRect(x, y, w, h);
+      }
+    }
+
+    // Pick the right floor tileset for a room label
+    function _roomTile(label) {
+      if (!label) return _tileWood;
+      if (label.includes("Bath"))    return _tileBath;
+      if (label.includes("Garage"))  return _tileConcrete;
+      if (label.includes("Utility")) return _tileConcrete;
+      if (label.includes("Yard"))    return _tileGrass;
+      return _tileWood;
+    }
+
+    // Breaker box — garage west wall
+    const BREAKER_X = 563, BREAKER_Y = 568; // world position (tweak here to reposition)
+    const BREAKER_W = 14,  BREAKER_H = 20;
+    const _breakerOffImg = new Image(); _breakerOffImg.src = "sprites/breaker/off.png";
+    const _breakerOnImg  = new Image(); _breakerOnImg.src  = "sprites/breaker/on.png";
 
     // --- Inventory ---
     let inventory    = []; // item name strings; max 3 (lighter excluded)
@@ -387,6 +510,34 @@
     let ghostWalkCycle  = 0;           // leg swing accumulator (like player walkCycle)
     let ghostFavRoom = null;           // {x,y,w,h} — ghost's favorite room
     let ghostEventTimer = 0;           // countdown (seconds) to next interaction attempt
+    let ghostAction      = "idle";      // current ghost action — used by evidence system
+    let ghostActionTimer = 0;          // countdown (seconds) to next action decision
+    let ghostActivityEvents = [];      // rolling list of {time, strength, source}
+    let gameTime         = 0;          // elapsed in-game seconds since round start
+    let activityChartSamples = [];     // [{t, v}] sampled every 2s, max 60 points
+    let activityChartTimer   = 0;      // countdown to next sample
+    const ACTIVITY_WINDOW = 60;        // seconds — how far back events count toward activity level
+    // Strength values per action — easy to tune
+    const ACTIVITY_STRENGTH = {
+      interactNearby:      3,
+      touchDoor:           2,
+      touchLightSwitch:    2,
+      checkEvidenceTarget: 4,
+      ghostEvent:          5,  // fired when ghostEventTimer evidence block runs
+    };
+    // Record a ghost activity event and trim expired ones from the window
+    function recordGhostActivity(source) {
+      const strength = ACTIVITY_STRENGTH[source] ?? 1;
+      ghostActivityEvents.push({ time: gameTime, strength, source });
+      // Debug: uncomment to verify events
+      // console.log(`[Activity] +${strength} from ${source} at t=${gameTime.toFixed(1)}s`);
+    }
+    // Returns sum of strengths of all events within the rolling window (0–N)
+    function getGhostActivityLevel() {
+      const cutoff = gameTime - ACTIVITY_WINDOW;
+      return ghostActivityEvents.reduce((sum, e) => e.time >= cutoff ? sum + e.strength : sum, 0);
+    }
+
     let emfLevel = 0; // derived each frame from emfSources; 0–5
     let emfSources = []; // [{x, y, level, timer}] — located interaction events
     let dotsDisturbTimer = 0;          // seconds remaining for D.O.T.S. ghost figure
@@ -557,6 +708,8 @@
       safeTime           = SAFE_TIME;
       safeTimeOver       = false;
       lastTime           = performance.now();
+      housePowerOn = true; // breaker starts on
+      roomLights.forEach(l => { l.on = true; }); // all switches start on
       inventory    = []; // journal is picked up from the van pegboard, not auto-equipped
       hasLighter   = false;
       selectedSlot = 0;
@@ -733,6 +886,12 @@
       if (_isFacing(210, 900, 28)) { dangerTimerOpen = true; return; }
       if (_isFacing(306, 900, 28)) { fourPanelOpen   = true; return; }
       if (_isFacing(255, 898, 28)) { corkBoardOpen   = true; return; }
+
+      // Breaker box — garage west wall
+      if (_isFacing(BREAKER_X, BREAKER_Y, 32)) {
+        housePowerOn = !housePowerOn;
+        return;
+      }
 
       // Light switches — within 28px AND facing
       const swIdx = roomLights.findIndex(s => _isFacing(s.x, s.y, 28));
@@ -1163,66 +1322,7 @@
     // Furniture — valid surfaces for camera placement (not the floor)
     // Each entry: { x, y, w, h, label, style? }
     // style: "wood" (default) | "bed" | "counter" | "seat"
-    const furniture = [
-      // ── Foyer (300,600 → 500,720) ─────────────────────────────────────────
-      // Rug listed first so nightstand + cubby render on top of it
-      { x:347, y:627, w:106,h:62, label:"Rug",        style:"rug"    }, // bigger, centered (room center x:400,y:660)
-      { x:303, y:699, w:18, h:18, label:"Nightstand", style:"wood"   }, // bottom-left corner, flush both walls
-      { x:309, y:703, w:5,  h:4,  label:"Key Bowl",   style:"accent" }, // smaller key bowl centered on nightstand
-      { x:430, y:712, w:62, h:8,  label:"Shoe Cubby", style:"wood"   }, // thin+long, along bottom wall, right of front door
-      { x:452, y:712, w:16, h:6,  label:"Shoes",      style:"accent" }, // one pair on cubby — accent/tan contrasts wood
-
-      // ── Living Room (360,80 → 560,460) ────────────────────────────────────
-      { x:396, y:83,  w:84, h:15, label:"TV Stand",      style:"wood"    }, // north wall — camera surface
-      { x:384, y:340, w:128,h:26, label:"Couch",         style:"seat"    }, // south center, facing TV
-      { x:415, y:282, w:68, h:22, label:"Coffee Table",  style:"wood"    }, // center — camera surface
-      { x:374, y:292, w:20, h:20, label:"Side Table",    style:"wood"    }, // west (clear of hallway door at y:187-213)
-      { x:526, y:292, w:20, h:20, label:"Side Table",    style:"wood"    }, // east side
-      { x:535, y:88,  w:18, h:55, label:"Bookshelf",     style:"wood"    }, // east wall — camera surface
-
-      // ── Dining Room (560,80 → 740,240) ────────────────────────────────────
-      { x:600, y:112, w:100,h:52, label:"Dining Table",  style:"wood"    }, // center — camera surface
-      { x:725, y:88,  w:12, h:48, label:"Sideboard",     style:"wood"    }, // east wall — camera surface
-
-      // ── Kitchen (560,240 → 740,400) ───────────────────────────────────────
-      { x:565, y:382, w:96, h:14, label:"Counter",       style:"counter" }, // south wall — camera surface
-      { x:725, y:248, w:12, h:90, label:"Counter",       style:"counter" }, // east wall  — camera surface
-      { x:565, y:248, w:12, h:70, label:"Counter",       style:"counter" }, // west wall (partial)
-      { x:613, y:296, w:62, h:24, label:"Island",        style:"counter" }, // center island — camera surface
-
-      // ── Garage (560,500 → 740,720) ────────────────────────────────────────
-      { x:685, y:508, w:48, h:110, label:"Car",           style:"car"     }, // parked car — portrait, against east wall
-
-      // ── Master Bed (80,460 → 300,600) ─────────────────────────────────────
-      { x:146, y:464, w:92, h:55, label:"Bed",           style:"bed"     }, // north wall — queen bed
-      { x:118, y:468, w:18, h:24, label:"Nightstand",    style:"wood"    }, // left of bed  — camera surface
-      { x:242, y:468, w:18, h:24, label:"Nightstand",    style:"wood"    }, // right of bed — camera surface
-      { x:84,  y:572, w:55, h:16, label:"Dresser",       style:"wood"    }, // SW corner    — camera surface
-
-      // ── Study (360,460 → 500,600) ─────────────────────────────────────────
-      { x:364, y:466, w:12, h:56, label:"Bookshelf",     style:"wood"    }, // west wall
-      { x:462, y:466, w:14, h:72, label:"Desk",          style:"wood"    }, // east wall — camera surface
-
-      // ── Bedroom 2 (80,80 → 300,280) ───────────────────────────────────────
-      { x:126, y:84,  w:100,h:55, label:"Bed",           style:"bed"     }, // north wall — full bed
-      { x:106, y:88,  w:18, h:24, label:"Nightstand",    style:"wood"    }, // left of bed  — camera surface
-      { x:229, y:88,  w:18, h:24, label:"Nightstand",    style:"wood"    }, // right of bed — camera surface
-      { x:188, y:266, w:58, h:12, label:"Dresser",       style:"wood"    }, // south wall   — camera surface
-
-      // ── Walk-in (80,380 → 180,460) ────────────────────────────────────────
-      { x:84,  y:388, w:80, h:14, label:"Shelf",         style:"wood"    }, // north wall
-
-      // ── Utility (560,400 → 740,500) ───────────────────────────────────────
-      { x:565, y:408, w:30, h:24, label:"Washer/Dryer",  style:"counter" }, // west wall
-
-      // ── Master Bath (80,600 → 240,720) ────────────────────────────────────
-      { x:84,  y:606, w:72, h:18, label:"Vanity",        style:"counter" }, // north wall
-      { x:174, y:606, w:50, h:38, label:"Bathtub",       style:"counter" }, // NE area
-
-      // ── Main Bath (80,280 → 240,380) ──────────────────────────────────────
-      { x:84,  y:286, w:55, h:16, label:"Vanity",        style:"counter" }, // west wall
-      { x:165, y:284, w:48, h:38, label:"Bathtub",       style:"counter" }, // east area
-    ];
+    const furniture = [];
 
     // Placement preview state — used for Video Camera furniture/tripod placement
     // lockedPlayerAngle: player facing frozen while preview is active (Fix 3)
@@ -1259,53 +1359,60 @@
       return doors.find(d => Math.hypot(cx - (d.x + d.w/2), cy - (d.y + d.h/2)) < 40);
     }
 
+    // ── Van layout constants (single source of truth — change here to move the whole van) ──
+    const VAN = {
+      // Outer body
+      ox:160, oy:870, ow:240, oh:100,
+      // Interior floor (inside the walls)
+      ix:172, iy:882, iw:202, ih:76,
+      // Derived
+      get iex() { return this.ix + this.iw; }, // interior east edge  (374)
+      get isx() { return this.ix; },            // interior west edge  (172)
+      get iny() { return this.iy; },            // interior north edge (882)
+      get isy() { return this.iy + this.ih; },  // interior south edge (958)
+      get icx() { return this.ix + this.iw/2; }, // interior center x  (273)
+      get icy() { return this.iy + this.ih/2; }, // interior center y  (920)
+    };
+
     // Van walls — three solid sides; east/back controlled by vanDoor
     const vanWalls = [
-      { x:180, y:886, w:180, h:8  }, // north wall
-      { x:180, y:958, w:180, h:8  }, // south wall
-      { x:180, y:886, w:8,   h:80 }, // west wall (cab side)
+      { x:VAN.ox,    y:VAN.oy,    w:VAN.ow, h:12  }, // north wall
+      { x:VAN.ox,    y:VAN.oy+VAN.oh-12, w:VAN.ow, h:12 }, // south wall
+      { x:VAN.ox,    y:VAN.oy,    w:12,  h:VAN.oh }, // west wall (cab)
       // Interior equipment collision
-      { x:204, y:893, w:126, h:14 }, // north monitor shelf (threat monitor + cork board + four-panel + keypad)
-      { x:188, y:906, w:16,  h:40 }, // CCTV monitor on west wall
-      { x:204, y:948, w:142, h:10 }, // pegboard on south wall
+      { x:VAN.ix,    y:VAN.iny,   w:VAN.iw, h:14  }, // north shelf (monitors + cork board + keypad)
+      { x:VAN.ix,    y:VAN.isy-12,w:VAN.iw, h:12  }, // south pegboard
+      { x:VAN.ix,    y:VAN.iny+14,w:16,     h:40  }, // CCTV west wall
     ];
 
     // Van rear door — starts closed; opens like a trailer ramp swinging east
     const vanDoor = { open: false };
 
     function nearVanDoor() {
-      // True when player is near the east/back wall of the van
-      return Math.hypot((player.x + 8) - 360, (player.y + 8) - 926) < 44;
+      return Math.hypot((player.x + 8) - VAN.iex, (player.y + 8) - VAN.icy) < 48;
     }
-
     function nearPegboard() {
-      // Pegboard is on the south interior wall — long side, around y:952, x:270
-      return Math.hypot((player.x + 8) - 270, (player.y + 8) - 950) < 40;
+      return Math.hypot((player.x + 8) - VAN.icx, (player.y + 8) - VAN.isy) < 44;
     }
-
     function nearKeypad() {
-      // Keypad (leave-site) — north wall, east end after swap (~x:347, y:900)
-      return Math.hypot((player.x + 8) - 347, (player.y + 8) - 900) < 28;
+      // NE corner keypad
+      return Math.hypot((player.x + 8) - (VAN.iex - 14), (player.y + 8) - VAN.iny) < 30;
     }
-
     function nearCCTV() {
-      // CCTV monitor — west wall (opposite the east opening), center (~x:196, y:926)
-      return Math.hypot((player.x + 8) - 196, (player.y + 8) - 926) < 32;
+      // West wall CCTV desk
+      return Math.hypot((player.x + 8) - (VAN.ix + 8), (player.y + 8) - (VAN.iny + 32)) < 34;
     }
-
     function nearDangerTimer() {
-      // Threat monitor — north wall, west end after swap (~x:210, y:900)
-      return Math.hypot((player.x + 8) - 210, (player.y + 8) - 900) < 28;
+      // North wall, west area threat monitor
+      return Math.hypot((player.x + 8) - (VAN.ix + 36), (player.y + 8) - VAN.iny) < 30;
     }
-
     function nearFourPanel() {
-      // Four-panel monitor — north wall, right of cork board (~x:306, y:900)
-      return Math.hypot((player.x + 8) - 306, (player.y + 8) - 900) < 28;
+      // North wall, east half monitors
+      return Math.hypot((player.x + 8) - (VAN.icx + 28), (player.y + 8) - VAN.iny) < 38;
     }
-
     function nearCorkBoard() {
-      // Cork board — north wall, shifted left (~x:255, y:898)
-      return Math.hypot((player.x + 8) - 255, (player.y + 8) - 898) < 28;
+      // North wall, center-to-west cork board
+      return Math.hypot((player.x + 8) - (VAN.icx - 22), (player.y + 8) - VAN.iny) < 34;
     }
 
     // Returns a flat list of all placed cameras (floor-placed + tripod-mounted)
@@ -1326,8 +1433,13 @@
     let mouseX = canvas.width / 2, mouseY = canvas.height / 2; // screen coords
     let flashlightOn  = true;
     let walkCycle    = 0;        // 0..2π walk phase, increments while moving
+    let walkAngle    = 0;        // angle of actual movement — used for sprite direction
+    let _lastDir8    = "south";  // last resolved 8-direction — hysteresis prevents rapid flipping
     let isMoving     = false;    // true this frame if player moved
     let playerFacing = "down";   // "down"|"up"|"left"|"right" — directional sprite selector
+    let turnAnim     = 0;        // 0..1 squish turn effect; 1 = just turned, decays to 0
+    let _facingLock  = 0;        // frames to suppress direction change after a switch (prevents flicker)
+    let _ctZoom      = 2.0;      // char test room zoom level
 
     // Stamina system
     const STAMINA_MAX           = 3.0;  // seconds of full sprint
@@ -1339,7 +1451,7 @@
 
     // One light switch per interior room (skip last room = Yard)
     const roomLights = rooms.slice(0, rooms.length - 1).map(r => ({
-      on: true,
+      on: true, // starts on
       x:  r.x + r.w - 7,  // flush against east wall (switch plate is 4px wide)
       y:  r.y + 18,        // slightly below the north wall, where a real switch sits
       side: "east",
@@ -1856,7 +1968,13 @@
       ghostMoveAngle = Math.PI / 2;
       ghostPauseTimer = 1.5;
       ghostWalkCycle  = 0;
-      ghostEventTimer = 10 + Math.random() * 8;
+      ghostEventTimer  = 10 + Math.random() * 8;
+      ghostAction         = "idle";
+      ghostActionTimer    = 3 + Math.random() * 4; // first decision in 3-7s
+      ghostActivityEvents = [];
+      gameTime            = 0;
+      activityChartSamples = [];
+      activityChartTimer   = 0;
 
       // Ghost Orbs — spawn inside the ghost's favorite room if the ghost has this evidence.
       // Ultimate Ghost always has Ghost Orb, so orbs are always present during debug testing.
@@ -2249,14 +2367,13 @@
         const nearWI = worldItems.find(it => Math.hypot((it.x + 6) - pcx, (it.y + 6) - pcy) < 30);
         if (nearWI && Math.hypot(wx - (nearWI.x + 6), wy - (nearWI.y + 6)) < TAP_R) return true;
         // Van rear door
-        if (nearVanDoor()     && Math.hypot(wx - 360, wy - 926) < TAP_R) return true;
-        // Van devices (world centres match nearX() target coordinates)
-        if (nearKeypad()      && Math.hypot(wx - 347, wy - 900) < TAP_R) return true;
-        if (nearPegboard()    && Math.hypot(wx - 270, wy - 950) < TAP_R) return true;
-        if (nearCCTV()        && Math.hypot(wx - 196, wy - 926) < TAP_R) return true;
-        if (nearDangerTimer() && Math.hypot(wx - 210, wy - 900) < TAP_R) return true;
-        if (nearFourPanel()   && Math.hypot(wx - 306, wy - 900) < TAP_R) return true;
-        if (nearCorkBoard()   && Math.hypot(wx - 255, wy - 898) < TAP_R) return true;
+        if (nearVanDoor()     && Math.hypot(wx - VAN.iex,          wy - VAN.icy)        < TAP_R) return true;
+        if (nearKeypad()      && Math.hypot(wx - (VAN.iex-14),     wy - VAN.iny)        < TAP_R) return true;
+        if (nearPegboard()    && Math.hypot(wx - VAN.icx,          wy - VAN.isy)        < TAP_R) return true;
+        if (nearCCTV()        && Math.hypot(wx - (VAN.ix+8),       wy - (VAN.iny+32))   < TAP_R) return true;
+        if (nearDangerTimer() && Math.hypot(wx - (VAN.ix+36),      wy - VAN.iny)        < TAP_R) return true;
+        if (nearFourPanel()   && Math.hypot(wx - (VAN.icx+28),     wy - VAN.iny)        < TAP_R) return true;
+        if (nearCorkBoard()   && Math.hypot(wx - (VAN.icx-22),     wy - VAN.iny)        < TAP_R) return true;
         // Light switches
         const swIdx = nearSwitch();
         if (swIdx >= 0) {
@@ -2346,6 +2463,23 @@
       const now = performance.now();
       const delta = (now - lastTime) / 1000;
       lastTime = now;
+      if (gameRunning) {
+        gameTime += delta;
+        // Sample ghost activity level for the van chart (every 2 seconds)
+        activityChartTimer -= delta;
+        if (activityChartTimer <= 0) {
+          activityChartTimer = 2;
+          const v = Math.min(10, getGhostActivityLevel());
+          activityChartSamples.push({ t: gameTime, v });
+          if (activityChartSamples.length > 60) activityChartSamples.shift();
+        }
+
+        // Trim expired activity events from the rolling window
+        const cutoff = gameTime - ACTIVITY_WINDOW;
+        if (ghostActivityEvents.length > 0 && ghostActivityEvents[0].time < cutoff) {
+          ghostActivityEvents = ghostActivityEvents.filter(e => e.time >= cutoff);
+        }
+      }
       if (!safeTimeOver) {
         safeTime -= delta;
         if (safeTime <= 0) {
@@ -2527,7 +2661,76 @@
               pickGhostTarget();
             }
             ghostWalkCycle += 0.12;
+            _ghostSpriteTimer++;
+            if (_ghostSpriteTimer >= SPRITE_FRAME_SPEED) { _ghostSpriteTimer = 0; _ghostSpriteFrame = (_ghostSpriteFrame + 1) % 6; }
           }
+        }
+
+        // ── Ghost action loop ────────────────────────────────────────────────
+        // Runs on its own interval (3–8s). Picks one action per window.
+        // ghostAction is stored so the evidence block below can check it.
+        ghostActionTimer -= delta;
+        if (ghostActionTimer <= 0) {
+          ghostActionTimer = (3 + Math.random() * 5) / beh.activityRate; // 3-8s, scaled by activity
+
+          // Build weighted action list — skip actions with no valid target
+          const actionPool = [];
+
+          // idle — always available
+          actionPool.push("idle", "idle"); // 2 weight
+
+          // roam — always valid (movement system handles actual waypoints)
+          actionPool.push("roam", "roam", "roam"); // 3 weight
+
+          // interactNearby — valid if player is within 120px (ghost senses presence)
+          const pcx = player.x + 8, pcy = player.y + 8;
+          if (Math.hypot(ghostX - pcx, ghostY - pcy) < 120) {
+            actionPool.push("interactNearby", "interactNearby"); // 2 weight
+          }
+
+          // touchDoor — valid if a closed door is within 60px of ghost
+          const nearDoor = doors.find(d =>
+            !d.open && Math.hypot((d.x + d.w/2) - ghostX, (d.y + d.h/2) - ghostY) < 60
+          );
+          if (nearDoor) actionPool.push("touchDoor");
+
+          // touchLightSwitch — valid if power is on and a switch is within 60px
+          const nearSwitch = housePowerOn && roomLights.find(s =>
+            Math.hypot(s.x - ghostX, s.y - ghostY) < 60
+          );
+          if (nearSwitch) actionPool.push("touchLightSwitch");
+
+          // checkEvidenceTarget — available once ghost is active in its fav room
+          const inFavNow = ghostX > ghostFavRoom.x && ghostX < ghostFavRoom.x + ghostFavRoom.w &&
+                           ghostY > ghostFavRoom.y && ghostY < ghostFavRoom.y + ghostFavRoom.h;
+          if (inFavNow) actionPool.push("checkEvidenceTarget");
+
+          // Pick one action at random from the pool
+          ghostAction = actionPool[Math.floor(Math.random() * actionPool.length)];
+
+          // Execute immediate world effects for some actions
+          if (ghostAction === "touchDoor" && nearDoor) {
+            nearDoor.open = !nearDoor.open; // ghost opens/closes door
+            recordGhostActivity("touchDoor");
+          }
+          if (ghostAction === "touchLightSwitch" && nearSwitch) {
+            const idx = roomLights.indexOf(nearSwitch);
+            if (idx >= 0) roomLights[idx].on = !roomLights[idx].on; // ghost flips switch
+            recordGhostActivity("touchLightSwitch");
+          }
+          if (ghostAction === "interactNearby")      recordGhostActivity("interactNearby");
+          if (ghostAction === "checkEvidenceTarget") recordGhostActivity("checkEvidenceTarget");
+          if (ghostAction === "roam" && ghostPauseTimer <= 0) {
+            // Nudge ghost toward a new waypoint — optionally change fav room
+            const bRoom = currentGhost?.specialRules?.includes("no_room_migration");
+            if (!bRoom && Math.random() < beh.roamTendency * 0.3) {
+              const interior = rooms.filter(r => r.w >= 80 && r.h >= 80 && r.w < 400 && r.h < 400);
+              if (interior.length) ghostFavRoom = interior[Math.floor(Math.random() * interior.length)];
+            }
+          }
+
+          // Debug: uncomment to log ghost decisions
+          // console.log(`[Ghost] action=${ghostAction} timer=${ghostActionTimer.toFixed(1)}s`);
         }
 
         // Periodic interaction check
@@ -2542,7 +2745,10 @@
           const inFav = (ghostX > ghostFavRoom.x && ghostX < ghostFavRoom.x + ghostFavRoom.w &&
                          ghostY > ghostFavRoom.y && ghostY < ghostFavRoom.y + ghostFavRoom.h);
           // Ultimate test ghost always fires; normal: roamTendency scales out-of-room chance
-          if (GHOST_CONFIG.forceUltimateGhost || Math.random() < (inFav ? 0.70 : 0.25 * beh.roamTendency)) {
+          // Action modifier: interactNearby / checkEvidenceTarget raise evidence fire chance
+          const actionBoost = (ghostAction === "interactNearby" || ghostAction === "checkEvidenceTarget") ? 0.25 : 0;
+          if (GHOST_CONFIG.forceUltimateGhost || Math.random() < (inFav ? 0.70 : 0.25 * beh.roamTendency) + actionBoost) {
+            recordGhostActivity("ghostEvent"); // evidence block fired — record as activity
             const ev = currentGhost.evidence;
 
             // EMF — ghost interaction leaves a located source near ghost position
@@ -2792,28 +2998,33 @@
       else if (canMoveTo(nx, player.y))   { player.x = nx; }
       else if (canMoveTo(player.x, ny))   { player.y = ny; }
       isMoving = (dx !== 0 || dy !== 0);
-      if (isMoving) walkCycle = (walkCycle + 0.12) % (Math.PI * 2);
+      if (isMoving) walkAngle = Math.atan2(dy, dx);
+      // Slightly slower cycle (0.10 vs 0.12) = more natural stride cadence
+      if (isMoving) walkCycle = (walkCycle + 0.10) % (Math.PI * 2);
+      else walkCycle *= 0.82; // fast decay to idle — snaps to rest without popping
+      if (turnAnim > 0) turnAnim = Math.max(0, turnAnim - 0.12);
+      if (isMoving) {
+        _spriteFrameTimer++;
+        if (_spriteFrameTimer >= SPRITE_FRAME_SPEED) { _spriteFrameTimer = 0; _spriteFrame = (_spriteFrame + 1) % 6; }
+      } else { _spriteFrame = 0; _spriteFrameTimer = 0; }
 
       // Snap playerAngle to 4-directional facing for sprite selection
       {
         let a = playerAngle;
         while (a >  Math.PI) a -= Math.PI * 2;
         while (a < -Math.PI) a += Math.PI * 2;
-        // Hysteresis: only switch direction when angle passes 10° beyond the boundary
-        const D = 0.18; // ~10° deadzone on each boundary
-        const newFacing =
-          (a >= -(Math.PI/4+D) && a <  (Math.PI/4+D))  ? "right" :
-          (a >=  (Math.PI/4-D) && a <  (3*Math.PI/4+D)) ? "down"  :
-          (a >= -(3*Math.PI/4+D) && a < -(Math.PI/4-D)) ? "up"    : "left";
-        if (newFacing !== playerFacing) {
-          // Only commit the change if the new direction's core zone is clearly entered
-          const core = Math.PI/4;
-          const inCore =
-            (newFacing === "right" && (a >= -core && a < core)) ||
-            (newFacing === "down"  && (a >= core  && a < Math.PI - core)) ||
-            (newFacing === "up"    && (a >= -(Math.PI - core) && a < -core)) ||
-            (newFacing === "left"  && (a < -(Math.PI - core) || a >= Math.PI - core));
-          if (inCore) playerFacing = newFacing;
+        // Direction switch with hysteresis + lock timer (prevents rapid flicker)
+        if (_facingLock > 0) { _facingLock--; } else {
+          const D = 0.22; // ~12.5° deadzone past each 45° boundary
+          const newFacing =
+            (a >= -(Math.PI/4+D) && a <  (Math.PI/4+D))   ? "right" :
+            (a >=  (Math.PI/4-D) && a <  (3*Math.PI/4+D)) ? "down"  :
+            (a >= -(3*Math.PI/4+D) && a < -(Math.PI/4-D)) ? "up"    : "left";
+          if (newFacing !== playerFacing) {
+            playerFacing = newFacing;
+            _facingLock = 6; // hold for 6 frames (~100ms) before allowing next switch
+            turnAnim = 1.0;  // trigger turn squish
+          }
         }
       }
 
@@ -3033,19 +3244,17 @@
       ctx.scale(ZOOM, ZOOM);
       ctx.translate(-(player.x + 8), -(player.y + 8));
 
-      // Walls — drawn under rooms; mark interior wall positions
-      ctx.fillStyle = "#2a1f14"; // warm charcoal-brown walls
-      walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+      // Walls — tiled plaster texture
+      walls.forEach(w => _fillTiled(ctx, _tileWall, "#2a1f14", w.x, w.y, w.w, w.h));
 
-      // Room floors
+      // Room floors — tiled by room type
       rooms.forEach(r => {
-        ctx.fillStyle = r.color;
-        ctx.fillRect(r.x, r.y, r.w, r.h);
+        _fillTiled(ctx, _roomTile(r.label), r.color, r.x, r.y, r.w, r.h);
       });
 
-      // Room light overlay — darken rooms whose light is off
+      // Room light overlay — darken rooms whose light is off OR breaker is off
       roomLights.forEach((light, i) => {
-        if (!light.on) {
+        if (!light.on || !housePowerOn) {
           ctx.fillStyle = "rgba(0,0,0,0.80)";
           ctx.fillRect(rooms[i].x, rooms[i].y, rooms[i].w, rooms[i].h);
         }
@@ -3068,6 +3277,28 @@
         ctx.fillRect(vx + 1, light.y + 2, 2, 2);
       });
 
+
+      // Breaker box — garage west wall
+      {
+        const bImg = housePowerOn ? _breakerOnImg : _breakerOffImg;
+        if (bImg.complete && bImg.naturalWidth > 0) {
+          ctx.drawImage(bImg, BREAKER_X - BREAKER_W/2, BREAKER_Y - BREAKER_H/2, BREAKER_W, BREAKER_H);
+        } else {
+          // Placeholder: grey box with coloured indicator dot
+          ctx.fillStyle = "#2a2a2a"; ctx.fillRect(BREAKER_X - 7, BREAKER_Y - 10, BREAKER_W, BREAKER_H);
+          ctx.fillStyle = housePowerOn ? "#40e840" : "#e84040";
+          ctx.fillRect(BREAKER_X - 2, BREAKER_Y - 2, 4, 4);
+        }
+        // Interact prompt
+        if (_isFacing(BREAKER_X, BREAKER_Y, 32)) {
+          ctx.font = "5px monospace";
+          ctx.fillStyle = "#e0e0e0";
+          ctx.textAlign = "center";
+          ctx.fillText(housePowerOn ? "Power ON" : "Power OFF", BREAKER_X, BREAKER_Y - 13);
+          ctx.fillText("[E] Toggle", BREAKER_X, BREAKER_Y - 7);
+          ctx.textAlign = "left";
+        }
+      }
 
       // Doors — wood panel when closed, small swung stub when open
       doors.forEach(d => {
@@ -3113,40 +3344,79 @@
         ctx.restore();
       }
 
-      // --- Floor textures (subtle, per room type) ---
+      // --- Floor textures — pixel-art clusters, no rgba gradients ---
 
-      // Living room — faint horizontal wood strips
-      ctx.fillStyle = "rgba(255,220,160,0.025)";
-      for (let fy = 84; fy < 456; fy += 8) ctx.fillRect(364, fy, 192, 3);
+      // Living room — wood planks: 2-tone horizontal strips (base #221a0e, plank highlight #2c2210, gap #18110a)
+      for (let fy = 84; fy < 456; fy += 10) {
+        ctx.fillStyle = "#2c2210"; ctx.fillRect(364, fy,     192, 7); // plank body
+        ctx.fillStyle = "#18110a"; ctx.fillRect(364, fy + 7, 192, 3); // plank gap/shadow
+      }
 
-      // Kitchen — small tile grid
-      ctx.fillStyle = "rgba(180,220,200,0.04)";
-      for (let fy = 244; fy < 396; fy += 10) ctx.fillRect(564, fy, 172, 1);
-      for (let fx = 564; fx < 736; fx += 10) ctx.fillRect(fx, 244, 1, 152);
+      // Dining room — warm oak planks
+      for (let fy = 80; fy < 240; fy += 10) {
+        ctx.fillStyle = "#252015"; ctx.fillRect(560, fy,     180, 7);
+        ctx.fillStyle = "#17100a"; ctx.fillRect(560, fy + 7, 180, 3);
+      }
 
-      // Bathrooms — tile grid (main bath + master bath)
-      ctx.fillStyle = "rgba(160,200,220,0.05)";
-      for (let fy = 284; fy < 376; fy += 8) ctx.fillRect(84, fy, 152, 1);
-      for (let fx = 84; fx < 236; fx += 8) ctx.fillRect(fx, 284, 1, 92);
-      for (let fy = 604; fy < 716; fy += 8) ctx.fillRect(84, fy, 152, 1);
-      for (let fx = 84; fx < 236; fx += 8) ctx.fillRect(fx, 604, 1, 112);
+      // Kitchen — cool tile grid (base #1a1e1a, tile face #1e2320, grout #13161a)
+      for (let fy = 240; fy < 400; fy += 12) {
+        for (let fx = 560; fx < 740; fx += 12) {
+          ctx.fillStyle = "#1e2320"; ctx.fillRect(fx,     fy,     11, 11);
+          ctx.fillStyle = "#13161a"; ctx.fillRect(fx + 11, fy,      1, 12); // vertical grout
+          ctx.fillStyle = "#13161a"; ctx.fillRect(fx,     fy + 11, 12,  1); // horizontal grout
+        }
+      }
 
-      // Hallway — subtle lengthwise strips
-      ctx.fillStyle = "rgba(255,255,255,0.015)";
-      ctx.fillRect(308, 84, 4, 512);
-      ctx.fillRect(344, 84, 4, 512);
+      // Bathrooms — cool tile (base #181e20, tile face #1c2428, grout #101418)
+      for (const [rx, ry, rw, rh] of [[84,280,160,100],[84,600,160,120]]) {
+        for (let fy = ry; fy < ry+rh; fy += 10) {
+          for (let fx = rx; fx < rx+rw; fx += 10) {
+            ctx.fillStyle = "#1c2428"; ctx.fillRect(fx,    fy,    9, 9);
+            ctx.fillStyle = "#101418"; ctx.fillRect(fx+9,  fy,    1, 10);
+            ctx.fillStyle = "#101418"; ctx.fillRect(fx,    fy+9,  10, 1);
+          }
+        }
+      }
 
-      // --- Wall edge shading (light from NW — highlight north/west, shadow south/east) ---
-      for (let i = 0; i < rooms.length - 1; i++) { // skip Yard (last room)
+      // Hallway — runner strips (2-tone)
+      ctx.fillStyle = "#252218"; ctx.fillRect(308, 84, 4, 512);
+      ctx.fillStyle = "#1a1812"; ctx.fillRect(344, 84, 4, 512);
+
+      // Yard — ground variation clusters (3-tone patches, no rgba)
+      { const patches = [
+          [80,740,60,18,"#18261a"],[160,755,50,14,"#142010"],[240,745,70,16,"#1c2a1c"],
+          [340,760,55,18,"#18261a"],[420,742,65,12,"#1a2818"],[520,758,45,16,"#162214"],
+          [600,748,60,14,"#1c2a1c"],[680,765,55,16,"#14200e"],[100,790,80,12,"#142010"],
+          [220,785,65,14,"#18261a"],[360,800,75,12,"#162214"],[500,788,60,16,"#1a2818"],
+        ];
+        patches.forEach(([px,py,pw,ph,pc]) => { ctx.fillStyle = pc; ctx.fillRect(px,py,pw,ph); });
+      }
+
+      // --- Room edge definition — pixel-art solid strips, no rgba ---
+      // Per-room: north highlight strip, south shadow strip, east shadow strip
+      const _RHL = [ // [r.color-light, r.color-dark] per room index, derived from base colors
+        ["#282520","#14120e"], // Hallway
+        ["#2c2820","#151210"], // Foyer
+        ["#28261e","#14120c"], // Bedroom 2
+        ["#1e262a","#10161a"], // Main Bath
+        ["#25221c","#12100c"], // Walk-in
+        ["#2e2412","#15110a"], // Living Room
+        ["#282618","#141208"], // Dining Room
+        ["#22281e","#111610"], // Kitchen
+        ["#251e1a","#121008"], // Utility
+        ["#221e14","#110f08"], // Garage
+        ["#28261e","#14120c"], // Master Bed
+        ["#22201a","#100e08"], // Study
+        ["#1e262a","#10161a"], // Master Bath
+        ["#231e18","#110e08"], // Coat Closet
+      ];
+      for (let i = 0; i < rooms.length - 1; i++) {
         const r = rooms[i];
-        ctx.fillStyle = "rgba(255,255,255,0.06)"; // north highlight
-        ctx.fillRect(r.x, r.y, r.w, 4);
-        ctx.fillStyle = "rgba(255,255,255,0.04)"; // west highlight
-        ctx.fillRect(r.x, r.y, 4, r.h);
-        ctx.fillStyle = "rgba(0,0,0,0.28)"; // south shadow
-        ctx.fillRect(r.x, r.y + r.h - 4, r.w, 4);
-        ctx.fillStyle = "rgba(0,0,0,0.18)"; // east shadow
-        ctx.fillRect(r.x + r.w - 4, r.y, 4, r.h);
+        const [hi, sh] = _RHL[i] || ["#2a2820","#141210"];
+        ctx.fillStyle = hi; ctx.fillRect(r.x, r.y, r.w, 3);           // north highlight
+        ctx.fillStyle = sh; ctx.fillRect(r.x, r.y + r.h - 3, r.w, 3); // south shadow
+        ctx.fillStyle = sh; ctx.fillRect(r.x + r.w - 2, r.y, 2, r.h); // east shadow
+        ctx.fillStyle = sh; ctx.fillRect(r.x, r.y, 2, r.h);            // west contact shadow
       }
 
 
@@ -3406,8 +3676,7 @@
       ctx.fillRect(180, 886, 180, 80);
 
       // Roof surface (interior floor visible through roof cutaway)
-      ctx.fillStyle = "#28384a";
-      ctx.fillRect(188, 894, 164, 64);
+      _fillTiled(ctx, _tileVan, "#28384a", 188, 894, 164, 64);
 
       // North side wall highlight (top edge — light hits it)
       ctx.fillStyle = "#3a5068";
@@ -3438,27 +3707,12 @@
       ctx.fillRect(210, 896, 28, 7);
       ctx.fillRect(242, 896, 28, 7);
 
-      // South interior wall — pegboard (long side)
-      ctx.fillStyle = "#2e2214"; // pegboard board
-      ctx.fillRect(206, 948, 140, 10);
-      ctx.fillStyle = "#4a3820"; // peg holes
-      for (let ph = 0; ph < 14; ph++) ctx.fillRect(210 + ph * 9, 951, 2, 2);
-      // Hanging items (small colored stubs = equipment silhouettes)
-      const pegItems = [
-        { x:211, c:"#4a8ab0" }, // EMF Reader — blue
-        { x:220, c:"#4a8ab0" },
-        { x:232, c:"#7a5a30" }, // Spirit Box — brown
-        { x:241, c:"#7a5a30" },
-        { x:253, c:"#8a7a20" }, // UV Flashlight — yellow
-        { x:264, c:"#4a6a30" }, // Ghost Book — green
-        { x:274, c:"#6a6a6a" }, // Video Camera — gray
-        { x:283, c:"#6a6a6a" },
-        { x:295, c:"#8a3a3a" }, // Thermometer — red
-      ];
-      pegItems.forEach(p => {
-        ctx.fillStyle = p.c;
-        ctx.fillRect(p.x, 944, 5, 7);
-      });
+      // South interior wall — pegboard (Pixel Lab sprite)
+      if (_vanPegboardImg.complete && _vanPegboardImg.naturalWidth > 0) {
+        ctx.drawImage(_vanPegboardImg, 206, 941, 140, 20);
+      } else {
+        ctx.fillStyle = "#2e2214"; ctx.fillRect(206, 948, 140, 10);
+      }
 
       // Back doors (east) — closed: dark panel; open: ramp east
       if (!vanDoor.open) {
@@ -3534,27 +3788,12 @@
       ctx.fillStyle = "#3a6888"; ctx.font = "4px monospace";
       ctx.fillText("CAM", 205, 926);
 
-      // Cork board — north wall, shifted left (~x:230-280, y:893-908)
-      ctx.fillStyle = "#3a2a10"; ctx.fillRect(230, 893, 50, 14); // frame
-      ctx.fillStyle = "#7a5c28"; ctx.fillRect(232, 895, 46, 10); // cork surface
-      // Pin dots
-      ctx.fillStyle = "#c89030";
-      ctx.beginPath(); ctx.arc(235, 898, 1.2, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(252, 898, 1.2, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(275, 898, 1.2, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = "#4a3218"; ctx.font = "4px monospace";
-      ctx.fillText("BOARD", 243, 912);
-
-      // Four-panel monitor — north wall, right of cork board (~x:284-329, y:893-906)
-      ctx.fillStyle = "#101418"; ctx.fillRect(284, 893, 45, 13); // housing
-      ctx.fillStyle = "#080c10"; ctx.fillRect(286, 894, 41, 10); // bezel
-      // 4 mini screen quadrants
-      ctx.fillStyle = "#0a1820"; ctx.fillRect(287, 895, 18, 4); ctx.fillRect(308, 895, 18, 4);
-      ctx.fillStyle = "#0a1820"; ctx.fillRect(287, 900, 18, 3); ctx.fillRect(308, 900, 18, 3);
-      ctx.fillStyle = "#1a3040"; ctx.fillRect(287, 895, 6, 2); ctx.fillRect(308, 895, 6, 2);
-      ctx.fillStyle = "#204050"; ctx.fillRect(287, 900, 6, 2); ctx.fillRect(308, 900, 6, 2);
-      ctx.fillStyle = "#2a4860"; ctx.font = "4px monospace";
-      ctx.fillText("4MNT", 292, 908);
+      // Cork board + Four-panel monitor — north wall (Pixel Lab monitors sprite)
+      if (_vanMonitorsImg.complete && _vanMonitorsImg.naturalWidth > 0) {
+        ctx.drawImage(_vanMonitorsImg, 228, 888, 110, 22);
+      } else {
+        ctx.fillStyle = "#101418"; ctx.fillRect(230, 893, 108, 13);
+      }
 
       // --- Furniture (valid camera surfaces) ---
       // Draw before worldItems so camera placed on furniture renders on top of it (not behind it)
@@ -3640,7 +3879,7 @@
         }
 
         // ── Standard elevated furniture (wood / bed / counter / seat) ─────────
-        ctx.fillStyle = "rgba(0,0,0,0.28)"; ctx.fillRect(f.x + 2, f.y + 3, f.w, f.h); // drop shadow
+        ctx.fillStyle = "rgba(18,8,0,0.32)"; ctx.fillRect(f.x + 2, f.y + 3, f.w, f.h); // drop shadow (warm)
         ctx.fillStyle = cBase;  ctx.fillRect(f.x,     f.y,     f.w,     f.h);
         ctx.fillStyle = cTop;   ctx.fillRect(f.x + 1, f.y + 1, f.w - 2, f.h - 3);
         ctx.fillStyle = cHi;    ctx.fillRect(f.x + 2, f.y + 1, f.w - 4, 3);       // top-edge highlight
@@ -4328,160 +4567,65 @@
       const holdingItem = !!(heldName || hasLighter);
       const fArmSwing = holdingItem ? 0 : armSwing; // front/right arm stiffens when holding
 
-      // Sprite palette — 3-tone shading per region, warm reference-matched colors
-      const SKH = "#f2c890";                              // skin: warm highlight (top-lit)
-      const SK  = "#e0a870", SKS = "#c07848";             // skin: base, shadow
-      const SKD = "#804028";                              // skin: dark outline/crease
-      const JKH = "#5878a0";                              // jacket: bright shoulder highlight
-      const JK  = "#2e4060", JKD = "#182438";             // jacket: base, shadow
-      const JKO = "#101820";                              // jacket: pixel outline
-      const CL  = "#3a5070";                              // collar: mid-tone between JK and JKH
-      const TRH = "#4a3420";                              // trousers: highlight (outer leg, top-lit)
-      const TR  = "#3a2818", TRD = "#1e1008";             // trousers: base, shadow
-      const SH  = "#1a1008", SHH = "#2e2018";             // shoes: base, top-highlight
-      const HRL = "#4a3018";                              // hair: highlight (lighter crown)
-      const HR  = "#2a1808";                              // hair: base/shadow
-      const OUT = "#100808";                              // universal dark outline
-      // Short helper — avoids repeating ctx.fillStyle+fillRect
+      // ── Sprite palette (reference-matched: warm skin, sandy hair, blue eyes) ──
+      const SKH = "#f4cca0"; // skin highlight
+      const SK  = "#e0a464"; // skin base
+      const SKS = "#b87838"; // skin shadow
+      const SKD = "#7a4018"; // skin dark / outline
+      const HRL = "#dcc078"; // hair highlight
+      const HR  = "#c0a040"; // hair base
+      const HRD = "#907030"; // hair shadow
+      const EW  = "#e8f0ff"; // eye white
+      const EI  = "#4890d8"; // eye iris (blue)
+      const EP  = "#1c3868"; // eye pupil / dark
+      const ES  = "#ffffff"; // eye shine
+      const LIP = "#d08060"; // lip/mouth hint
+      const SHD = "#2a1c0c"; // shoe/sole dark
+      const SHH2= "#504030"; // shoe top-highlight
+      const OUT = "#1a0c08"; // universal dark outline
+      // Short helper
       function _pr(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); }
+      // Shared pixel-circle head (r=6, center cx,cy)
+      // hairRows = how many rows from top to cover in hair (typ 5)
+      function _drawHead(cx, cy, hairRows) {
+        // Skin fill — Bresenham r=6 stacked rects
+        _pr(cx,   cy-6, 1,1,SK);
+        _pr(cx-3, cy-5, 7,1,SK);
+        _pr(cx-4, cy-4, 9,1,SK);
+        _pr(cx-5, cy-3,11,3,SK);  // dy -3,-2,-1
+        _pr(cx-6, cy,  13,1,SK);  // widest
+        _pr(cx-5, cy+1,11,3,SK);  // dy +1,+2,+3
+        _pr(cx-4, cy+4, 9,1,SK);
+        _pr(cx-3, cy+5, 7,1,SK);
+        _pr(cx,   cy+6, 1,1,SK);
+        // Face shading
+        _pr(cx-5, cy+2,11,3,SKS); // lower jaw shadow cluster
+        _pr(cx-3, cy-4, 6,1,SKH); // forehead highlight
+        // Side outline
+        _pr(cx-6, cy-2, 1,6,SKD); _pr(cx+5, cy-2, 1,6,SKD);
+        // Hair cap (top hairRows rows)
+        const hStops = [1, 7, 9, 11, 11, 11, 13]; // widths per row from top
+        const hXs    = [0,-3,-4,-5,-5,-5,-6];
+        for (let r = 0; r < Math.min(hairRows, hStops.length); r++) {
+          _pr(cx+hXs[r], cy-6+r, hStops[r], 1, HR);
+        }
+        // Side hair strips below hair cap
+        _pr(cx-5, cy-3+hairRows, 1, 4, HR);
+        _pr(cx+4, cy-3+hairRows, 1, 4, HR);
+        // Crown highlight
+        _pr(cx-1, cy-6, 2, 1, HRL);
+        _pr(cx-2, cy-5, 3, 1, HRL);
+      }
+
+      // Ground shadow
+      const _shadowPulse = isMoving ? 1 + Math.abs(Math.sin(walkCycle)) * 0.18 : 1;
+      ctx.fillStyle = "rgba(0,0,0,0.22)";
+      ctx.beginPath(); ctx.ellipse(pcx, pcy+8, 9*_shadowPulse, 3.5, 0, 0, Math.PI*2); ctx.fill();
+      // Player sprite (canonical draw fn, shared with test room)
+      _drawPlayerSprite(ctx, pcx, pcy);
 
       ctx.save();
       ctx.translate(pcx, pcy);
-      // NO rotation — each direction is a distinct sprite, not a rotated copy
-
-      // Ground shadow
-      ctx.fillStyle = "rgba(0,0,0,0.28)";
-      ctx.beginPath(); ctx.ellipse(0, 7, 9, 4, 0, 0, Math.PI*2); ctx.fill();
-
-      if (playerFacing === "down") {
-        // ── FRONT VIEW ──────────────────────────────────────────────────
-        // Legs — 3 tones: outer highlight, base, inner/bottom shadow
-        _pr(-5, 4 + legSwing, 4, 7, TR);  _pr(-5, 4 + legSwing, 1, 7, TRH); _pr(-2, 4 + legSwing, 1, 7, TRD); _pr(-5, 10 + legSwing, 4, 1, TRD);
-        _pr( 1, 4 - legSwing, 4, 7, TR);  _pr( 4, 4 - legSwing, 1, 7, TRH); _pr( 1, 4 - legSwing, 1, 7, TRD); _pr( 1, 10 - legSwing, 4, 1, TRD);
-        // Shoes
-        _pr(-6, 10 + legSwing, 5, 3, SH); _pr(-6, 10 + legSwing, 5, 1, SHH);
-        _pr( 1, 10 - legSwing, 5, 3, SH); _pr( 1, 10 - legSwing, 5, 1, SHH);
-        // Arms — 3 tones
-        _pr(-9, -3 + armSwing,  4, 8, JK); _pr(-9, -3 + armSwing, 1, 8, JKH); _pr(-6, -3 + armSwing, 1, 8, JKD);
-        _pr( 5, -3 + fArmSwing, 4, 8, JK); _pr( 8, -3 + fArmSwing, 1, 8, JKH); _pr( 5, -3 + fArmSwing, 1, 8, JKD);
-        // Hands — 3 tones
-        _pr(-9,  4 + armSwing,  4, 3, SK);  _pr(-9, 4 + armSwing, 4, 1, SKH); _pr(-9, 6 + armSwing, 4, 1, SKS);
-        _pr( 5,  4 + fArmSwing, 4, 3, SK);  _pr( 5, 4 + fArmSwing, 4, 1, SKH); _pr( 5, 6 + fArmSwing, 4, 1, SKS);
-        // Body — 3 tones
-        _pr(-5, -6, 10, 11, JK);
-        _pr(-5, -6, 10,  3, JKH);
-        _pr(-4, -4,  8,  2, JK);
-        _pr(-5,  3, 10,  3, JKD);
-        _pr(-1, -6,  2, 11, JKD);
-        _pr(-5, -6,  1, 11, JKO); _pr(4, -6, 1, 11, JKO);
-        // Collar — visible band at jacket top, separates neck from body clearly
-        _pr(-3, -7, 6, 2, CL); _pr(-3, -7, 6, 1, JKH); _pr(-3, -6, 6, 1, JKD);
-        // Neck — skin between collar and head
-        _pr(-1, -8, 3, 2, SK); _pr(-1, -8, 3, 1, SKH); _pr(-1, -7, 3, 1, SKS);
-        // Head base
-        ctx.fillStyle = SK; ctx.beginPath(); ctx.ellipse(0, -13, 6, 6, 0, 0, Math.PI*2); ctx.fill();
-        // Chin shadow (lower half)
-        ctx.fillStyle = SKS; ctx.beginPath(); ctx.ellipse(0, -11.5, 5.5, 3.5, 0, 0, Math.PI); ctx.fill();
-        // Forehead highlight (top-lit upper quarter)
-        ctx.fillStyle = SKH; ctx.beginPath(); ctx.ellipse(0, -15.5, 4, 2, 0, Math.PI, 0); ctx.fill();
-        // Head outline
-        ctx.strokeStyle = SKD; ctx.lineWidth = 0.8;
-        ctx.beginPath(); ctx.ellipse(0, -13, 6, 6, 0, 0, Math.PI*2); ctx.stroke();
-        // Hair — 2 tones: base + crown highlight
-        ctx.fillStyle = HR;  ctx.beginPath(); ctx.ellipse(0, -15, 6, 3.5, 0, Math.PI, 0); ctx.fill();
-        ctx.fillStyle = HRL; ctx.beginPath(); ctx.ellipse(0, -15.5, 3.5, 2, 0, Math.PI, 0); ctx.fill(); // sheen
-        _pr(-6, -17, 2, 6, HR); _pr(4, -17, 2, 6, HR); // side hair drapes
-        // Ears — 3-tone
-        _pr(-7, -15, 2, 4, SK); _pr(-7, -14, 1, 2, SKS); _pr(-7, -13, 2, 1, SKD);
-        _pr( 5, -15, 2, 4, SK); _pr( 5, -14, 1, 2, SKS); _pr( 5, -13, 2, 1, SKD);
-        // Eyes + shine
-        _pr(-3, -14, 2, 2, OUT); _pr(1, -14, 2, 2, OUT);
-        _pr(-2.5, -14.5, 1, 1, "#fff"); _pr(1.5, -14.5, 1, 1, "#fff");
-        // Nose bridge + nostril
-        _pr(-0.5, -13, 1, 2, SKS); _pr(-1, -11.5, 3, 1, SKD);
-        // Mouth hint
-        _pr(-1.5, -10.5, 3, 1, SKS);
-
-      } else if (playerFacing === "up") {
-        // ── BACK VIEW ───────────────────────────────────────────────────
-        // Legs — 3 tones
-        _pr(-5, 4 + legSwing, 4, 7, TR);  _pr(-5, 4 + legSwing, 1, 7, TRH); _pr(-2, 4 + legSwing, 1, 7, TRD); _pr(-5, 10 + legSwing, 4, 1, TRD);
-        _pr( 1, 4 - legSwing, 4, 7, TR);  _pr( 4, 4 - legSwing, 1, 7, TRH); _pr( 1, 4 - legSwing, 1, 7, TRD); _pr( 1, 10 - legSwing, 4, 1, TRD);
-        _pr(-6, 10 + legSwing, 5, 3, SH); _pr(-6, 10 + legSwing, 5, 1, SHH);
-        _pr( 1, 10 - legSwing, 5, 3, SH); _pr( 1, 10 - legSwing, 5, 1, SHH);
-        // Arms — 3 tones
-        _pr(-9, -3 + armSwing,  4, 8, JK); _pr(-9, -3 + armSwing, 1, 8, JKH); _pr(-6, -3 + armSwing, 1, 8, JKD);
-        _pr( 5, -3 + fArmSwing, 4, 8, JK); _pr( 8, -3 + fArmSwing, 1, 8, JKH); _pr( 5, -3 + fArmSwing, 1, 8, JKD);
-        _pr(-9, 4 + armSwing, 4, 3, SK);  _pr(-9, 4 + armSwing, 4, 1, SKH);
-        _pr( 5, 4 + fArmSwing, 4, 3, SK); _pr( 5, 4 + fArmSwing, 4, 1, SKH);
-        // Body — 3 tones
-        _pr(-5, -6, 10, 11, JK);
-        _pr(-5, -6, 10,  3, JKH);
-        _pr(-4, -4,  8,  2, JK);
-        _pr(-5,  3, 10,  3, JKD);
-        _pr(-1, -6,  2, 11, JKD);
-        _pr(-5, -6,  1, 11, JKO); _pr(4, -6, 1, 11, JKO);
-        // Collar back — small band, darker (in shadow facing away)
-        _pr(-3, -7, 6, 2, JKD); _pr(-3, -7, 6, 1, CL);
-        // Neck — darker since facing away
-        _pr(-1, -8, 3, 2, SKS); _pr(-1, -8, 3, 1, SK);
-        // Head — all hair
-        ctx.fillStyle = HR; ctx.beginPath(); ctx.ellipse(0, -13, 6, 6, 0, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = HRL; ctx.beginPath(); ctx.ellipse(0, -15.5, 3.5, 2.5, 0, Math.PI, 0); ctx.fill(); // hair sheen
-        ctx.strokeStyle = SKD; ctx.lineWidth = 0.8;
-        ctx.beginPath(); ctx.ellipse(0, -13, 6, 6, 0, 0, Math.PI*2); ctx.stroke();
-
-      } else {
-        // ── SIDE VIEW (drawn facing left; ctx.scale(-1,1) for right) ────
-        ctx.save();
-        if (playerFacing === "right") ctx.scale(-1, 1);
-        const lFwd = legSwing;
-        // Back leg (behind, darker)
-        _pr(1, 4 + lFwd,  3, 7, TRD);
-        _pr(0, 10 + lFwd, 4, 3, "#0e0806");
-        // Front leg — 3 tones: top highlight, base, inner shadow
-        _pr(-4, 4 - lFwd, 4, 7, TR); _pr(-4, 4 - lFwd, 1, 7, TRH); _pr(-1, 4 - lFwd, 1, 7, TRD);
-        _pr(-5, 10 - lFwd, 5, 3, SH); _pr(-5, 10 - lFwd, 5, 1, SHH);
-        // Back arm (in shadow behind body)
-        _pr(2, -3, 3, 7, JKD); _pr(2, 4, 3, 3, SKS);
-        // Body — 3 tones
-        _pr(-4, -6, 9, 11, JK);
-        _pr(-4, -6, 9,  3, JKH);
-        _pr(-3, -4, 7,  2, JK);
-        _pr(-4,  3, 9,  3, JKD);
-        _pr(-4, -6, 1, 11, JKO); _pr(4, -6, 1, 11, JKO);
-        // Collar — side view shows the front edge
-        _pr(-4, -7, 5, 2, CL); _pr(-4, -7, 5, 1, JKH); _pr(-4, -6, 5, 1, JKD);
-        // Neck — skin above collar
-        _pr(-2, -8, 3, 2, SK); _pr(-2, -8, 3, 1, SKH); _pr(-2, -7, 3, 1, SKS);
-        // Front arm — 3 tones
-        _pr(-8, -3 + fArmSwing, 4, 8, JK);
-        _pr(-8, -3 + fArmSwing, 1, 8, JKH);
-        _pr(-5, -3 + fArmSwing, 1, 8, JKD);
-        // Hand — 3 tones
-        _pr(-8,  4 + fArmSwing, 4, 3, SK);
-        _pr(-8,  4 + fArmSwing, 4, 1, SKH);
-        _pr(-8,  6 + fArmSwing, 4, 1, SKS);
-        // Head (profile) — SK base with far-side shadow
-        ctx.fillStyle = SK; ctx.beginPath(); ctx.ellipse(-1, -13, 5, 6, 0, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = SKS; ctx.beginPath(); ctx.ellipse(1.5, -13, 3, 4.5, 0, 0, Math.PI*2); ctx.fill(); // far shadow
-        // Forehead highlight (top-lit)
-        ctx.fillStyle = SKH; ctx.beginPath(); ctx.ellipse(-2, -16, 3, 1.5, 0, Math.PI, 0); ctx.fill();
-        ctx.strokeStyle = SKD; ctx.lineWidth = 0.8;
-        ctx.beginPath(); ctx.ellipse(-1, -13, 5, 6, 0, 0, Math.PI*2); ctx.stroke();
-        // Hair — 2 tones, covers back half + crown
-        ctx.fillStyle = HR;
-        ctx.beginPath(); ctx.ellipse(1.5, -13.5, 4.5, 5.5, 0, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(-1, -16, 4.5, 3, 0, Math.PI, 0); ctx.fill();
-        ctx.fillStyle = HRL; ctx.beginPath(); ctx.ellipse(0, -16, 3, 1.8, 0, Math.PI, 0); ctx.fill(); // hair sheen
-        // Near-side ear — 3 tones
-        _pr(-6, -15, 2, 4, SK); _pr(-6, -14, 1, 2, SKS); _pr(-6, -13, 2, 1, SKD);
-        // Eye + shine
-        _pr(-4, -14, 2, 2, OUT); _pr(-3.5, -14.5, 1, 1, "#fff");
-        // Nose bump + nostril
-        _pr(-6, -12, 3, 1, SKH); _pr(-6, -11, 2, 1, SKD);
-        ctx.restore(); // undo side-view flip
-      }
 
       // Held item — position varies by facing direction
       if (heldName) {
@@ -4793,103 +4937,66 @@
           dotsVisibleHere = holdingCam && Math.hypot(gdx, gdy) < 300 && Math.abs(gDiff) <= Math.PI / 6;
         }
         if (dotsProjector && dotsVisibleHere) {
-          // Fade out in the last 1.5 seconds of the disturb window
           const alpha = Math.min(1, dotsDisturbTimer / 1.5);
-          // Leg/arm swing — ghost keeps moving while visible
-          const gLeg = (ghostPauseTimer <= 0) ? Math.sin(ghostWalkCycle * 1.8) * 4 : 0;
-          const gArm = (ghostPauseTimer <= 0) ? -Math.sin(ghostWalkCycle * 1.8) * 3 : 0;
-          // Flicker on the torso — quick green pulse driven by time
           const flicker = 0.5 + 0.5 * Math.sin(Date.now() / 80);
+          const dir = _angleToDir8(ghostMoveAngle);
+          const isWalking = ghostPauseTimer <= 0;
+          const img = isWalking ? _ghostSpriteWalk[dir][_ghostSpriteFrame] : _ghostSpriteIdle[dir];
+          if (img && img.complete && img.naturalWidth > 0) {
+            const W = 48, H = Math.round(48 * (img.naturalHeight / img.naturalWidth));
+            const gx = Math.round(ghostX - W/2), gy = Math.round(ghostY - H/2);
+            ctx.save();
 
-          ctx.save();
-          ctx.globalAlpha = alpha;
-          ctx.translate(ghostX, ghostY);
-          ctx.rotate(ghostMoveAngle - Math.PI / 2);
+            // Step 1: draw sprite very faint green
+            ctx.globalAlpha = alpha * 0.18;
+            ctx.drawImage(img, gx, gy, W, H);
 
-          // Shadow
-          ctx.fillStyle = "rgba(0,30,0,0.20)";
-          ctx.beginPath(); ctx.ellipse(1, 2, 9, 5, 0, 0, Math.PI*2); ctx.fill();
+            // Step 2: green tint overlay clipped to sprite shape
+            ctx.globalCompositeOperation = "source-atop";
+            ctx.globalAlpha = alpha * 0.7;
+            ctx.fillStyle = `rgba(20,180,60,1)`;
+            ctx.fillRect(gx, gy, W, H);
+            ctx.globalCompositeOperation = "source-over";
 
-          // Legs — green-black rotted cloth
-          ctx.fillStyle = "#0a1808";
-          ctx.fillRect(-4, 3 + gLeg, 3, 6);
-          ctx.fillRect( 1, 3 - gLeg, 3, 6);
-          ctx.fillStyle = "#2a4828"; // feet
-          ctx.fillRect(-4, 8 + gLeg, 3, 2);
-          ctx.fillRect( 1, 8 - gLeg, 3, 2);
+            // Step 3: dot grid — laser points shining through the figure
+            ctx.globalAlpha = alpha * (0.55 + flicker * 0.3);
+            ctx.fillStyle = `rgba(40,255,80,1)`;
+            for (let dy = gy; dy < gy + H; dy += 4) {
+              for (let dx = gx; dx < gx + W; dx += 4) {
+                ctx.fillRect(dx, dy, 1, 1);
+              }
+            }
 
-          // Arms — dark forest green jacket sleeves
-          ctx.fillStyle = "#0a2818";
-          ctx.fillRect(-8, -1 + gArm, 3, 6);
-          ctx.fillRect( 5, -2 - gArm, 3, 6);
-          ctx.fillStyle = "#4a7850"; // hands — muted green-grey
-          ctx.fillRect(-8, 4 + gArm, 3, 2);
-          ctx.fillRect( 5, 3 - gArm, 3, 2);
-
-          // Body — dark green jacket, same shape as normal ghost
-          ctx.fillStyle = "#0a2818";
-          ctx.fillRect(-5, -5, 10, 9);
-          ctx.fillStyle = "#071410"; ctx.fillRect(-5, -5, 10, 3); // shoulders
-          ctx.fillStyle = "#040e0a"; ctx.fillRect(-1, -5,  2, 9); // stripe
-          // Green pulse dot instead of rot stain — flickers with the projector
-          ctx.fillStyle = `rgba(40,255,80,${flicker * 0.45})`;
-          ctx.beginPath(); ctx.arc(-1, -1, 2, 0, Math.PI*2); ctx.fill();
-
-          // Head — green-tinted corpse pallor
-          ctx.fillStyle = "#7ab888";
-          ctx.beginPath(); ctx.ellipse(0, -8, 4.5, 4, 0, 0, Math.PI*2); ctx.fill();
-          ctx.fillStyle = "#0a0c04"; // hair
-          ctx.beginPath(); ctx.ellipse(0, -10, 4.5, 2.5, 0, Math.PI, 0); ctx.fill();
-          ctx.fillStyle = "#5a8868"; // ears
-          ctx.fillRect(-6, -9, 2, 3);
-          ctx.fillRect( 4, -9, 2, 3);
-
-          // Eye sockets — same dark hollows, but green iris glow instead of grey-white
-          ctx.fillStyle = "#020808";
-          ctx.beginPath(); ctx.ellipse(-1.5, -8.5, 2.0, 1.5, 0, 0, Math.PI*2); ctx.fill();
-          ctx.beginPath(); ctx.ellipse( 1.5, -8.5, 2.0, 1.5, 0, 0, Math.PI*2); ctx.fill();
-          ctx.fillStyle = "rgba(40,255,80,0.85)"; // bright green — the D.O.T.S. tell
-          ctx.beginPath(); ctx.arc(-1.5, -8.5, 0.7, 0, Math.PI*2); ctx.fill();
-          ctx.beginPath(); ctx.arc( 1.5, -8.5, 0.7, 0, Math.PI*2); ctx.fill();
-
-          // Sunken cheeks + forehead mark — greenish
-          ctx.fillStyle = "rgba(5,20,5,0.55)";
-          ctx.fillRect(-4, -7, 2, 2);
-          ctx.fillRect( 2, -7, 2, 2);
-          ctx.fillStyle = "#081a08";
-          ctx.fillRect(-1, -11, 2, 1);
-
-          // D.O.T.S. scan-line shimmer — thin horizontal green lines over the body
-          ctx.fillStyle = "rgba(40,255,80,0.18)";
-          for (let sy = -12; sy <= 10; sy += 3) {
-            ctx.fillRect(-9, sy, 18, 1);
+            ctx.restore();
           }
-
-          ctx.restore();
         }
       }
 
       // --- Voodoo Doll ghost appearance (shoulder/hunt pins) ---
-      // Gray translucent ghost visible at its current location for ghostAppearTimer seconds.
+      // Translucent ghost — sprite with grey desaturate tint, pulsing alpha
       if (currentGhost && ghostAppearTimer > 0) {
-        const alpha = Math.min(1, ghostAppearTimer) * 0.65;
-        const gLeg = (ghostPauseTimer <= 0) ? Math.sin(ghostWalkCycle * 1.8) * 4 : 0;
-        const gArm = (ghostPauseTimer <= 0) ? -Math.sin(ghostWalkCycle * 1.8) * 3 : 0;
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.translate(ghostX, ghostY);
-        ctx.rotate(ghostMoveAngle - Math.PI / 2);
-        ctx.fillStyle = "rgba(180,180,180,0.12)";
-        ctx.beginPath(); ctx.ellipse(1, 2, 9, 5, 0, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = "#707070"; ctx.fillRect(-4, 3+gLeg, 3, 6); ctx.fillRect(1, 3-gLeg, 3, 6);
-        ctx.fillStyle = "#888";    ctx.fillRect(-8, -1+gArm, 3, 6); ctx.fillRect(5, -2-gArm, 3, 6);
-        ctx.fillStyle = "#999";    ctx.fillRect(-5, -5, 10, 9);
-        ctx.fillStyle = "#bbb";
-        ctx.beginPath(); ctx.ellipse(0, -8, 4.5, 4, 0, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = "#444";
-        ctx.beginPath(); ctx.ellipse(-1.5, -8.5, 2.0, 1.5, 0, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse( 1.5, -8.5, 2.0, 1.5, 0, 0, Math.PI*2); ctx.fill();
-        ctx.restore();
+        const pulse = 0.5 + 0.15 * Math.sin(Date.now() / 300); // slow fade pulse
+        const alpha = Math.min(1, ghostAppearTimer) * 0.55 * pulse + 0.1;
+        const dir = _angleToDir8(ghostMoveAngle);
+        const isWalking = ghostPauseTimer <= 0;
+        const img = isWalking ? _ghostSpriteWalk[dir][_ghostSpriteFrame] : _ghostSpriteIdle[dir];
+        if (img && img.complete && img.naturalWidth > 0) {
+          const W = 48, H = Math.round(48 * (img.naturalHeight / img.naturalWidth));
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          // Draw sprite
+          ctx.drawImage(img, Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
+          // Grey desaturate overlay — gives it the cold translucent look
+          ctx.globalCompositeOperation = "saturation";
+          ctx.fillStyle = "rgba(128,128,128,1)";
+          ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
+          ctx.globalCompositeOperation = "source-over";
+          // Slight blue-grey tint
+          ctx.globalAlpha = alpha * 0.3;
+          ctx.fillStyle = "rgba(180,200,220,1)";
+          ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
+          ctx.restore();
+        }
       }
 
       // --- Summoning Circle ghost manifestation ---
@@ -5785,6 +5892,12 @@
         e.preventDefault();
         const dir = e.deltaY > 0 ? 1 : -1; // +1 = scroll down, -1 = scroll up
 
+        if (menuPhase === "chartest") {
+          _ctZoom = Math.max(0.5, Math.min(8.0, _ctZoom * (dir > 0 ? 0.9 : 1.1)));
+          _ctZoom = +_ctZoom.toFixed(2);
+          return;
+        }
+
         if (equipmentOpen) {
           // Scroll the pegboard horizontally
           const virtualW = Math.ceil(equipmentList.length / 3) * 200 + 60;
@@ -5833,6 +5946,15 @@
       const mx = (e.clientX - rect.left) * (canvas.width  / rect.width);
       const my = (e.clientY - rect.top)  * (canvas.height / rect.height);
 
+      // ── Character test room clicks ───────────────────────────────────────
+      if (menuPhase === "chartest") {
+        const b = drawCharTest._btn;
+        if (b && mx >= b.x && mx < b.x+b.w && my >= b.y && my < b.y+b.h) {
+          menuPhase = "intro"; // runs full normal flow: intro → profile/corkboard
+        }
+        return;
+      }
+
       // ── Profile screen clicks ────────────────────────────────────────────
       if (menuPhase === "profile") {
         for (const b of _profBtnRects) {
@@ -5851,6 +5973,18 @@
             mx >= _titleStartRect.x && mx <= _titleStartRect.x + _titleStartRect.w &&
             my >= _titleStartRect.y && my <= _titleStartRect.y + _titleStartRect.h) {
           _enterCorkboard();
+        }
+        if (_titleCreditsRect &&
+            mx >= _titleCreditsRect.x && mx <= _titleCreditsRect.x + _titleCreditsRect.w &&
+            my >= _titleCreditsRect.y && my <= _titleCreditsRect.y + _titleCreditsRect.h) {
+          menuPhase = "credits";
+        }
+        return;
+      }
+      if (menuPhase === "credits") {
+        const back = _titleCreditsRect && _titleCreditsRect._back;
+        if (back && mx >= back.x && mx <= back.x+back.w && my >= back.y && my <= back.y+back.h) {
+          menuPhase = "title";
         }
         return;
       }
@@ -9188,12 +9322,87 @@
       ctx.font = "bold 13px monospace"; ctx.textAlign = "center";
       ctx.fillText("START", btnX+btnW/2, btnY+btnH/2+5);
 
+      // ── Credits button ──
+      const crW = 80, crH = 26;
+      const crX = Math.floor((W-crW)/2), crY = 504;
+      const crHov = _titleMx >= crX && _titleMx <= crX+crW && _titleMy >= crY && _titleMy <= crY+crH;
+      _titleCreditsRect = { x: crX, y: crY, w: crW, h: crH };
+      ctx.fillStyle = crHov ? "#1a1508" : "#0e0c06";
+      ctx.fillRect(crX, crY, crW, crH);
+      ctx.strokeStyle = crHov ? "#6a5010" : "#3a2a0a"; ctx.lineWidth = 1;
+      ctx.strokeRect(crX+0.5, crY+0.5, crW-1, crH-1);
+      ctx.fillStyle = crHov ? "#c8a030" : "#5a4820";
+      ctx.font = "10px monospace"; ctx.textAlign = "center";
+      ctx.fillText("CREDITS", crX+crW/2, crY+crH/2+4);
+
       // ── Bottom hint strip ──
       ctx.strokeStyle = "rgba(180,130,40,0.12)"; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(60, 524); ctx.lineTo(W-60, 524); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(60, 544); ctx.lineTo(W-60, 544); ctx.stroke();
       ctx.fillStyle = "#3a2e18"; ctx.font = "8px monospace"; ctx.textAlign = "center";
-      ctx.fillText("PRESS  ENTER  OR  CLICK  START  TO  CONTINUE", W/2, 546);
-      ctx.fillText("ESC during a round returns here", W/2, 560);
+      ctx.fillText("PRESS  ENTER  OR  CLICK  START  TO  CONTINUE", W/2, 562);
+
+      ctx.textAlign = "left";
+    }
+
+    // ── drawMenuCredits ───────────────────────────────────────────────────────
+    function drawMenuCredits() {
+      const W = canvas.width, H = canvas.height;
+      ctx.fillStyle = "#080604"; ctx.fillRect(0, 0, W, H);
+
+      // scan lines
+      ctx.strokeStyle = "rgba(140,80,20,0.04)"; ctx.lineWidth = 1;
+      for (let gy = 0; gy < H; gy += 9) {
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+      }
+
+      ctx.textAlign = "center";
+
+      // title
+      ctx.fillStyle = "rgba(180,130,40,0.18)"; ctx.beginPath();
+      ctx.moveTo(60, 100); ctx.lineTo(W-60, 100); ctx.stroke();
+      ctx.shadowColor = "rgba(232,201,80,0.5)"; ctx.shadowBlur = 20;
+      ctx.fillStyle = "#f0d870"; ctx.font = "bold 28px Georgia, serif";
+      ctx.fillText("CREDITS", W/2, 80);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(180,130,40,0.18)";
+      ctx.beginPath(); ctx.moveTo(60, 96); ctx.lineTo(W-60, 96); ctx.stroke();
+
+      // credits list
+      const lines = [
+        ["GAME DESIGN & DEVELOPMENT", "#8a7040", "italic 11px Georgia, serif"],
+        ["Ryan",                       "#d4c080", "bold 16px Georgia, serif"],
+        ["",null,null],
+        ["BUILT WITH",                 "#8a7040", "italic 11px Georgia, serif"],
+        ["HTML5  ·  Canvas  ·  Vanilla JS", "#c8a840", "11px monospace"],
+        ["",null,null],
+        ["SPECIAL THANKS",             "#8a7040", "italic 11px Georgia, serif"],
+        ["Claude  ·  Coffee  ·  Vibes", "#c8a840", "11px monospace"],
+      ];
+      let ly = 148;
+      for (const [text, color, font] of lines) {
+        if (!text) { ly += 14; continue; }
+        ctx.fillStyle = color; ctx.font = font;
+        ctx.fillText(text, W/2, ly);
+        ly += 26;
+      }
+
+      // version
+      ctx.fillStyle = "#3a2e18"; ctx.font = "8px monospace";
+      ctx.fillText("v0.1.0  ·  2025  ·  A Ryan Game Co. Production", W/2, 360);
+
+      // back button
+      const bW = 120, bH = 36, bX = Math.floor((W-120)/2), bY = 400;
+      const bHov = _titleMx >= bX && _titleMx <= bX+bW && _titleMy >= bY && _titleMy <= bY+bH;
+      if (bHov) { ctx.shadowColor = "rgba(232,201,80,0.3)"; ctx.shadowBlur = 12; }
+      ctx.fillStyle = bHov ? "#251e0a" : "#1a1506";
+      ctx.fillRect(bX, bY, bW, bH);
+      ctx.strokeStyle = bHov ? "#d4b030" : "#8a6c20"; ctx.lineWidth = 2;
+      ctx.strokeRect(bX+1, bY+1, bW-2, bH-2);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = bHov ? "#f0d060" : "#c8a840";
+      ctx.font = "bold 11px monospace";
+      ctx.fillText("← BACK", bX+bW/2, bY+bH/2+4);
+      _titleCreditsRect._back = { x: bX, y: bY, w: bW, h: bH };
 
       ctx.textAlign = "left";
     }
@@ -10925,7 +11134,6 @@
 
       // ── BOTTOM RIGHT: Ghost Activity Chart ────────────────────────────────
       panel(p.br.x, p.br.y, panW, panH, "GHOST ACTIVITY");
-      const ghostActivity = 0; // placeholder — no mechanic yet
       const chartX = p.br.x + 34, chartY = p.br.y + 18, chartW = panW - 48, chartH = panH - 36;
       // Chart bg + grid
       ctx.fillStyle = "#060c10"; ctx.fillRect(chartX, chartY, chartW, chartH);
@@ -10943,18 +11151,47 @@
       [10,8,6,4,2,0].forEach((v, i) => {
         ctx.fillText(v, chartX - 3, chartY + (chartH/5)*i + 4);
       });
-      // X-axis labels (0–60 in steps of 10)
-      ctx.textAlign = "center";
-      [0,10,20,30,40,50,60].forEach((v, i) => {
-        ctx.fillText(v, chartX + (chartW/6)*i, chartY + chartH + 10);
-      });
-      // Flat activity line at 0 (bottom of chart)
-      const actY = chartY + chartH; // y=0 maps to bottom
-      ctx.strokeStyle = "#40c8a0"; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(chartX, actY); ctx.lineTo(chartX + chartW, actY); ctx.stroke();
-      // Current value dot
-      ctx.fillStyle = "#40c8a0";
-      ctx.beginPath(); ctx.arc(chartX + chartW, actY, 3, 0, Math.PI*2); ctx.fill();
+      // X-axis label
+      ctx.fillStyle = "#2a5060"; ctx.textAlign = "center"; ctx.font = "7px monospace";
+      ctx.fillText("← last 120s", chartX + chartW/2, chartY + chartH + 10);
+      // Live activity line from samples
+      {
+        const samples = activityChartSamples;
+        const sampleToX = i => chartX + (i / Math.max(samples.length - 1, 1)) * chartW;
+        const valToY    = v => chartY + chartH - (v / 10) * chartH;
+        const currentLevel = Math.min(10, getGhostActivityLevel());
+        const lineColor = currentLevel >= 7 ? "#e05050" : currentLevel >= 4 ? "#d8c040" : "#40c8a0";
+        ctx.strokeStyle = lineColor; ctx.lineWidth = 1.5;
+        if (samples.length === 0) {
+          // No data yet — flat zero line
+          ctx.beginPath();
+          ctx.moveTo(chartX, chartY + chartH);
+          ctx.lineTo(chartX + chartW, chartY + chartH);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          samples.forEach((s, i) => {
+            const x = sampleToX(i), y = valToY(s.v);
+            i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+          // Glow fill under the line
+          ctx.save();
+          ctx.globalAlpha = 0.15;
+          ctx.fillStyle = lineColor;
+          ctx.lineTo(sampleToX(samples.length - 1), chartY + chartH);
+          ctx.lineTo(chartX, chartY + chartH);
+          ctx.closePath(); ctx.fill();
+          ctx.restore();
+          // Current value dot at right edge
+          const lastY = valToY(samples[samples.length - 1].v);
+          ctx.fillStyle = lineColor;
+          ctx.beginPath(); ctx.arc(sampleToX(samples.length - 1), lastY, 3, 0, Math.PI*2); ctx.fill();
+        }
+        // Current numeric readout
+        ctx.fillStyle = lineColor; ctx.font = "bold 10px monospace"; ctx.textAlign = "right";
+        ctx.fillText(currentLevel.toFixed(1), chartX + chartW - 2, chartY + 12);
+      }
       // Y-axis label
       ctx.save(); ctx.translate(p.br.x + 10, p.br.y + panH/2);
       ctx.rotate(-Math.PI/2); ctx.fillStyle = "#2a5870"; ctx.font = "7px monospace"; ctx.textAlign = "center";
@@ -11757,11 +11994,464 @@
       ctx.restore();
     }
 
+    // ── Character Test Room ─────────────────────────────────────────────
+    // Standalone scene for building/testing the player sprite.
+    // Access: set menuPhase = "chartest" anywhere, or type chartest() in console.
+    // Exit: click "Continue to Game" button → goes to corkboard.
+    // Standalone sprite draw — used by both the main game draw() and the test room
+    function _drawPlayerSprite(ctx, pcx, pcy) {
+      const dir = _angleToDir8(isMoving ? walkAngle : playerAngle);
+      const img = isMoving ? _spriteWalk[dir][_spriteFrame] : _spriteIdle[dir];
+      if (img && img.complete && img.naturalWidth > 0) {
+        const W = 48, H = Math.round(48 * (img.naturalHeight / img.naturalWidth));
+        const bob = isMoving ? Math.abs(Math.sin(walkCycle)) * -2 : 0;
+        ctx.save();
+        ctx.translate(Math.round(pcx), Math.round(pcy + bob));
+        ctx.drawImage(img, Math.round(-W/2), Math.round(-H/2), W, H);
+        ctx.restore();
+        return;
+      }
+      // Turn squish: scaleX pinches to 0 at midpoint of turnAnim then opens back up
+      const turnScaleX = turnAnim > 0 ? Math.abs(Math.cos((1 - turnAnim) * Math.PI)) : 1;
+      const legSwing  = isMoving ? Math.sin(walkCycle) * 3.5 : 0;
+      const armSwing  = isMoving ? -Math.sin(walkCycle) * 2.5 : 0;
+      const fArmSwing = armSwing;
+      const SKH = "#f4cca0", SK = "#e0a464", SKS = "#b87838", SKD = "#7a4018";
+      const HRL = "#dcc078", HR = "#c0a040", HRD = "#907030";
+      const EW = "#e8f0ff", EI = "#4890d8", EP = "#1c3868", ES = "#ffffff";
+      const LIP = "#d08060", SHD = "#2a1c0c", SHH2 = "#504030", OUT = "#1a0c08";
+      function _pr(x, y, w, h, c) { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); }
+      function _drawHead(cx, cy, hairRows) {
+        _pr(cx,   cy-6,1,1,SK); _pr(cx-3,cy-5,7,1,SK); _pr(cx-4,cy-4,9,1,SK);
+        _pr(cx-5, cy-3,11,3,SK); _pr(cx-6,cy,13,1,SK); _pr(cx-5,cy+1,11,3,SK);
+        _pr(cx-4, cy+4,9,1,SK); _pr(cx-3,cy+5,7,1,SK); _pr(cx,cy+6,1,1,SK);
+        _pr(cx-5,cy+2,11,3,SKS); _pr(cx-3,cy-4,6,1,SKH);
+        _pr(cx-6,cy-2,1,6,SKD); _pr(cx+5,cy-2,1,6,SKD);
+        const hW=[1,7,9,11,11,11,13], hX=[0,-3,-4,-5,-5,-5,-6];
+        for (let r=0; r<Math.min(hairRows,hW.length); r++) _pr(cx+hX[r],cy-6+r,hW[r],1,HR);
+        _pr(cx-5,cy-3+hairRows,1,4,HR); _pr(cx+4,cy-3+hairRows,1,4,HR);
+        _pr(cx-1,cy-6,2,1,HRL); _pr(cx-2,cy-5,3,1,HRL);
+      }
+      ctx.save();
+      ctx.translate(pcx, pcy);
+      if (turnScaleX !== 1) ctx.scale(turnScaleX, 1);
+      if (playerFacing === "down") {
+        const ls=legSwing, as=armSwing, fa=fArmSwing;
+        _pr(-5,4+ls,4,8,SK); _pr(-5,4+ls,1,8,SKH); _pr(-2,4+ls,1,8,SKS); _pr(-4,11+ls,2,1,SKS);
+        _pr( 1,4-ls,4,8,SK); _pr( 4,4-ls,1,8,SKH); _pr( 1,4-ls,1,8,SKS); _pr( 2,11-ls,2,1,SKS);
+        _pr(-6,12+ls,5,2,SHD); _pr(-6,12+ls,4,1,SHH2); _pr(-7,13+ls,1,1,SHD);
+        _pr( 1,12-ls,5,2,SHD); _pr( 1,12-ls,4,1,SHH2); _pr( 5,13-ls,1,1,SHD);
+        _pr(-8,-4+as,3,8,SK); _pr(-8,-4+as,1,8,SKH); _pr(-6,-4+as,1,8,SKS); _pr(-7,4+as,2,1,SKS);
+        _pr( 5,-4+fa,3,8,SK); _pr( 7,-4+fa,1,8,SKH); _pr( 5,-4+fa,1,8,SKS); _pr( 5,4+fa,2,1,SKS);
+        _pr(-8,4+as,3,3,SK); _pr(-8,4+as,3,1,SKH); _pr(-8,6+as,3,1,SKS);
+        _pr( 5,4+fa,3,3,SK); _pr( 5,4+fa,3,1,SKH); _pr( 5,6+fa,3,1,SKS);
+        _pr(-4,-6,8,1,SKH); _pr(-5,-5,1,3,SK); _pr(4,-5,1,3,SK);
+        _pr(-4,-5,8,7,SK); _pr(-4,-5,1,7,SKS); _pr(3,-5,1,7,SKS);
+        _pr(-3,2,6,3,SKS); _pr(-1,-6,2,9,SKS);
+        _pr(-1,-7,3,2,SK); _pr(-1,-7,3,1,SKH);
+        _drawHead(0,-16,5);
+        _pr(-7,-17,2,4,SK); _pr(-7,-16,1,2,SKS); _pr(5,-17,2,4,SK); _pr(5,-16,1,2,SKS);
+        _pr(-4,-17,4,1,OUT); _pr(-4,-16,1,2,EW); _pr(-3,-16,2,2,EI); _pr(-1,-16,1,2,EP);
+        _pr(-4,-14,4,1,EI); _pr(-3,-13,2,1,OUT); _pr(-3,-16,1,1,ES);
+        _pr( 1,-17,4,1,OUT); _pr( 1,-16,1,2,EP); _pr( 2,-16,2,2,EI); _pr( 4,-16,1,2,EW);
+        _pr( 1,-14,4,1,EI); _pr( 2,-13,2,1,OUT); _pr( 2,-16,1,1,ES);
+        _pr(-1,-12,2,1,SKS); _pr(-2,-10,1,1,LIP); _pr(-1,-10,2,1,SKD); _pr(1,-10,1,1,LIP);
+      } else if (playerFacing === "up") {
+        const ls=legSwing, as=armSwing, fa=fArmSwing;
+        _pr(-5,4+ls,4,8,SK); _pr(-5,4+ls,1,8,SKH); _pr(-2,4+ls,1,8,SKS); _pr(-4,11+ls,2,1,SKS);
+        _pr( 1,4-ls,4,8,SK); _pr( 4,4-ls,1,8,SKH); _pr( 1,4-ls,1,8,SKS); _pr( 2,11-ls,2,1,SKS);
+        _pr(-6,12+ls,5,2,SHD); _pr(-6,12+ls,4,1,SHH2); _pr(1,12-ls,5,2,SHD); _pr(1,12-ls,4,1,SHH2);
+        _pr(-8,-4+as,3,8,SK); _pr(-8,-4+as,1,8,SKH); _pr(-6,-4+as,1,8,SKS); _pr(-7,4+as,2,1,SKS);
+        _pr( 5,-4+fa,3,8,SK); _pr( 7,-4+fa,1,8,SKH); _pr( 5,-4+fa,1,8,SKS); _pr( 5,4+fa,2,1,SKS);
+        _pr(-8,4+as,3,3,SK); _pr(5,4+fa,3,3,SK);
+        _pr(-4,-6,8,1,SKH); _pr(-5,-5,1,3,SK); _pr(4,-5,1,3,SK);
+        _pr(-4,-5,8,7,SK); _pr(-4,-5,1,7,SKS); _pr(3,-5,1,7,SKS);
+        _pr(-3,2,6,3,SKS); _pr(-1,-6,2,9,SKS); _pr(-1,-7,3,2,SKS);
+        _pr(0,-22,1,1,HR); _pr(-3,-21,7,1,HR); _pr(-4,-20,9,1,HR);
+        _pr(-5,-19,11,3,HR); _pr(-6,-16,13,1,HR); _pr(-5,-15,11,3,HR);
+        _pr(-4,-12,9,1,HR); _pr(-3,-11,7,1,HR); _pr(0,-10,1,1,HR);
+        _pr(-2,-22,3,1,HRL); _pr(-3,-21,5,1,HRL);
+        _pr(-5,-17,1,5,HRD); _pr(4,-17,1,5,HRD);
+      } else {
+        ctx.save();
+        if (playerFacing === "right") ctx.scale(-1,1);
+        const lFwd=legSwing, fa=fArmSwing;
+        _pr(1,4+lFwd,3,8,SKS); _pr(0,12+lFwd,4,2,SHD);
+        _pr(-4,4-lFwd,4,8,SK); _pr(-4,4-lFwd,1,8,SKH); _pr(-1,4-lFwd,1,8,SKS); _pr(-3,11-lFwd,2,1,SKS);
+        _pr(-6,12-lFwd,5,2,SHD); _pr(-5,12-lFwd,4,1,SHH2);
+        _pr(2,-4,3,8,SKS); _pr(2,4,3,3,SKS);
+        _pr(-3,-6,7,1,SKH); _pr(-4,-5,1,3,SK);
+        _pr(-3,-5,7,7,SK); _pr(-3,-5,1,7,SKS); _pr(3,-5,1,7,SKS);
+        _pr(-3,2,6,3,SKS); _pr(-1,-7,3,2,SK); _pr(-1,-7,2,1,SKH);
+        _pr(-7,-4+fa,3,8,SK); _pr(-7,-4+fa,1,8,SKH); _pr(-5,-4+fa,1,8,SKS); _pr(-6,4+fa,2,1,SKS);
+        _pr(-7,4+fa,3,3,SK); _pr(-7,4+fa,3,1,SKH); _pr(-7,6+fa,3,1,SKS);
+        _pr(-1,-22,1,1,SK); _pr(-3,-21,5,1,SK); _pr(-4,-20,7,1,SK);
+        _pr(-5,-19,9,3,SK); _pr(-6,-16,10,1,SK); _pr(-5,-15,9,3,SK);
+        _pr(-4,-12,7,1,SK); _pr(-3,-11,5,1,SK); _pr(-1,-10,1,1,SK);
+        _pr(-5,-11,9,3,SKS); _pr(-4,-19,5,1,SKH); _pr(-6,-17,1,7,SKD);
+        _pr(-1,-22,1,1,HR); _pr(-3,-21,5,1,HR); _pr(-4,-20,7,1,HR);
+        _pr(-5,-19,9,4,HR); _pr(3,-18,1,3,HR); _pr(2,-15,1,4,HR);
+        _pr(-1,-22,2,1,HRL);
+        _pr(-6,-17,2,3,SK); _pr(-6,-16,1,2,SKS);
+        _pr(-5,-17,3,1,OUT); _pr(-5,-16,1,2,EW); _pr(-4,-16,1,2,EI); _pr(-3,-16,1,2,EP);
+        _pr(-5,-14,3,1,EI); _pr(-4,-13,2,1,OUT); _pr(-4,-16,1,1,ES);
+        _pr(-7,-12,3,1,SKH); _pr(-8,-11,1,1,SKD); _pr(-6,-10,2,1,LIP);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
+    // Minimal movement update for the test room (no ghost/game systems)
+    function updateCharTest() {
+      // Zoom keys: = / + to zoom in, - to zoom out
+      if (keys["Equal"] || keys["NumpadAdd"])      { _ctZoom = Math.min(+(_ctZoom + 0.05).toFixed(2), 8.0); keys["Equal"] = keys["NumpadAdd"] = false; }
+      if (keys["Minus"] || keys["NumpadSubtract"]) { _ctZoom = Math.max(+(_ctZoom - 0.05).toFixed(2), 0.5); keys["Minus"] = keys["NumpadSubtract"] = false; }
+      let dx = 0, dy = 0;
+      const spd = player.speed * 1.6;
+      if (keys["ArrowLeft"]  || keys["a"] || keys["A"]) dx = -spd;
+      if (keys["ArrowRight"] || keys["d"] || keys["D"]) dx =  spd;
+      if (keys["ArrowUp"]    || keys["w"] || keys["W"]) dy = -spd;
+      if (keys["ArrowDown"]  || keys["s"] || keys["S"]) dy =  spd;
+      // Diagonal normalization
+      if (dx !== 0 && dy !== 0) { dx *= 0.707; dy *= 0.707; }
+      player.x += dx; player.y += dy;
+      isMoving = (dx !== 0 || dy !== 0);
+      if (isMoving) walkCycle = (walkCycle + 0.10) % (Math.PI * 2);
+      else walkCycle *= 0.82;
+      if (turnAnim > 0) turnAnim = Math.max(0, turnAnim - 0.12);
+      if (isMoving) {
+        _spriteFrameTimer++;
+        if (_spriteFrameTimer >= SPRITE_FRAME_SPEED) { _spriteFrameTimer = 0; _spriteFrame = (_spriteFrame + 1) % 6; }
+      } else { _spriteFrame = 0; _spriteFrameTimer = 0; }
+      // Facing from movement direction
+      if (dx !== 0 || dy !== 0) {
+        const a = Math.atan2(dy, dx);
+        if (_facingLock > 0) { _facingLock--; } else {
+          const D = 0.22;
+          const nf = (a >= -(Math.PI/4+D) && a < (Math.PI/4+D))    ? "right" :
+                     (a >=  (Math.PI/4-D) && a < (3*Math.PI/4+D))  ? "down"  :
+                     (a >= -(3*Math.PI/4+D) && a < -(Math.PI/4-D)) ? "up"    : "left";
+          if (nf !== playerFacing) { playerFacing = nf; _facingLock = 6; turnAnim = 1.0; }
+        }
+      }
+    }
+
+    function drawCharTest() {
+      const W = canvas.width, H = canvas.height;
+      const TILE = 20, ZOOM_CT = _ctZoom;
+      const LIGHT = "#b0b0b0", DARK = "#787878";
+      // Checkerboard floor (world-space, scrolls with player camera)
+      const offX = player.x - W / (2 * ZOOM_CT);
+      const offY = player.y - H / (2 * ZOOM_CT);
+      const ts = TILE * ZOOM_CT;
+      const startTX = Math.floor(offX * ZOOM_CT / ts);
+      const startTY = Math.floor(offY * ZOOM_CT / ts);
+      for (let ty = startTY - 1; ty < startTY + Math.ceil(H / ts) + 2; ty++) {
+        for (let tx = startTX - 1; tx < startTX + Math.ceil(W / ts) + 2; tx++) {
+          ctx.fillStyle = (((tx % 2) + (ty % 2) + 2) % 2) === 0 ? LIGHT : DARK;
+          const sx = (tx * ts) - offX * ZOOM_CT;
+          const sy = (ty * ts) - offY * ZOOM_CT;
+          ctx.fillRect(sx, sy, ts, ts);
+        }
+      }
+      // ── TEST CHARS (scaled) ──────────────────────────────────────────
+      ctx.save();
+      ctx.translate(W/2, H/2);
+      ctx.scale(_ctZoom, _ctZoom);
+      _tcMale(ctx,   -80, 10);
+      _tcFemale(ctx,  80, 10);
+      ctx.fillStyle="#cccccc"; ctx.font=`bold ${Math.round(11/_ctZoom)}px monospace`; ctx.textAlign="center";
+      ctx.fillText("M", -80, -58); ctx.fillText("F", 80, -58);
+      ctx.restore();
+      ctx.textAlign="left";
+      // ─────────────────────────────────────────────────────────────────
+      // UI overlay — label
+      ctx.fillStyle = "#e0e0e0";
+      ctx.font = "bold 13px monospace";
+      ctx.textAlign = "left";
+      ctx.fillText("CHARACTER TEST ROOM", 16, 28);
+      ctx.font = "11px monospace";
+      ctx.fillStyle = "#aaaaaa";
+      ctx.fillText("WASD / Arrow keys to move  ·  Scroll or +/- to zoom  ·  zoom: " + _ctZoom.toFixed(1) + "x", 16, 46);
+      // Continue button
+      const BW = 160, BH = 32, BX = W - BW - 12, BY = 12;
+      ctx.fillStyle = "#2a2a2a";
+      ctx.fillRect(BX, BY, BW, BH);
+      ctx.fillStyle = "#555";
+      ctx.fillRect(BX, BY, BW, 1); ctx.fillRect(BX, BY, 1, BH);
+      ctx.fillStyle = "#e8e8e8";
+      ctx.font = "bold 12px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("Continue to Game", BX + BW / 2, BY + 20);
+      ctx.textAlign = "left";
+      drawCharTest._btn = { x: BX, y: BY, w: BW, h: BH };
+    }
+    // ══ TEST CHARS — MALE + FEMALE side by side (isolated) ══
+
+    // _tcHead no longer used — inlined per character below
+    function _tcHead(r, SK,SKH,SKS,EAR,EW,EI,EP,ES) {
+      r(-4,-29,8,2,SK); r(-8,-27,16,2,SK); r(-10,-25,20,8,SK);
+      r(-8,-17,16,2,SK); r(-5,-15,10,2,SK); r(-3,-13,6,1,SK);
+      r(-12,-23,2,4,SKS); r(9,-23,2,4,SKS); r(-2,-28,4,2,SKH);
+      // arc outline
+      r(-4,-30,8,1,"#1a0c06");
+      r(-5,-29,1,2,"#1a0c06"); r(4,-29,1,2,"#1a0c06");
+      r(-9,-28,4,1,"#1a0c06"); r(5,-28,4,1,"#1a0c06");
+      r(-9,-27,1,2,"#1a0c06"); r(8,-27,1,2,"#1a0c06");
+      r(-11,-26,2,1,"#1a0c06"); r(9,-26,2,1,"#1a0c06");
+      r(-11,-25,1,8,"#1a0c06"); r(10,-25,1,8,"#1a0c06");
+      // chin outline
+      r(-9,-17,1,2,"#1a0c06"); r(8,-17,1,2,"#1a0c06");
+      r(-9,-15,3,1,"#1a0c06"); r(6,-15,3,1,"#1a0c06");
+      r(-6,-15,1,2,"#1a0c06"); r(5,-15,1,2,"#1a0c06");
+      r(-6,-13,3,1,"#1a0c06"); r(3,-13,3,1,"#1a0c06");
+      r(-3,-12,6,1,"#1a0c06");
+      // ears
+      r(-13,-23,3,5,EAR); r(-13,-24,3,1,"#1a0c06"); r(-13,-18,3,1,"#1a0c06"); r(-14,-23,1,5,"#1a0c06");
+      r(10,-23,3,5,EAR);  r(10,-24,3,1,"#1a0c06");  r(10,-18,3,1,"#1a0c06");  r(12,-23,1,5,"#1a0c06");
+      // eyes
+      r(-7,-22,4,1,"#1a0c06"); r(-7,-21,1,2,"#1a0c06"); r(-4,-21,1,2,"#1a0c06"); r(-7,-19,4,1,"#1a0c06");
+      r(-6,-21,3,2,EW); r(-6,-21,2,2,EI); r(-5,-20,1,1,EP); r(-6,-21,1,1,ES);
+      r(3,-22,4,1,"#1a0c06"); r(3,-21,1,2,"#1a0c06"); r(6,-21,1,2,"#1a0c06"); r(3,-19,4,1,"#1a0c06");
+      r(4,-21,3,2,EW); r(4,-21,2,2,EI); r(5,-20,1,1,EP); r(5,-21,1,1,ES);
+      // mouth
+      r(-2,-14,4,1,SKS); r(-2,-13,4,1,"#1a0c06");
+    }
+
+    // ── MALE ─────────────────────────────────────────────────────────
+    function _tcMale(ctx, cx, cy) {
+      const O="#1a0806";
+      const SH="#f2aa5c",S="#d07838",SS="#a04820",SD="#6a2c0c"; // skin: hi/base/shadow/deep
+      const HK="#402010",HM="#7a3c1c",HL="#9a5028";             // hair dark/mid/hi
+      const WH="#f8f8f8",WM="#d8d8d8",WS="#a8a8a8";             // white clothing
+      const FK="#2a1408",FD="#180c04";                           // dark shoes/feet
+      function r(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(Math.round(cx+x),Math.round(cy+y),w,h);}
+
+      // HEAD top=cy-28, chin=cy-17 (12px tall)
+      // Hair cap
+      r(-5,-28,10,1,HK); r(-6,-27,12,4,HK);
+      r(-5,-27,8,2,HM);  r(-4,-26,6,1,HL);   // mid + highlight strip
+      r(-6,-23,1,3,HM);  r(5,-23,1,3,HM);    // sideburns
+      // Face fill 10×8
+      r(-5,-23,10,8,S);
+      r(-5,-23,3,8,SH);  // lit left
+      r(4,-23,2,8,SS);   // shadow right
+      // Ears
+      r(-6,-22,1,3,S); r(-7,-22,1,3,O); r(-6,-19,1,1,O);
+      r(5,-22,1,3,S);  r(6,-22,1,3,O);  r(5,-19,1,1,O);
+      // Eyebrows
+      r(-4,-21,3,1,HK); r(1,-21,3,1,HK);
+      // Eyes 3×2 dark block
+      r(-4,-20,3,2,O); r(-3,-19,1,1,S);  // left + shine
+      r(1,-20,3,2,O);  r(2,-19,1,1,S);   // right + shine
+      // Nose hint
+      r(-1,-18,2,1,SS);
+      // Mouth
+      r(-2,-16,4,1,SS); r(-1,-16,2,1,SD);
+      // Chin shadow
+      r(-4,-15,8,1,SD);
+      // Head outline
+      r(-5,-28,10,1,O); r(-6,-27,1,11,O); r(5,-27,1,11,O); r(-5,-16,10,1,O);
+
+      // NECK  3px tall
+      r(-3,-16,6,3,S); r(-3,-16,2,3,SH); r(2,-16,1,3,SS);
+      r(-4,-16,1,3,O); r(3,-16,1,3,O); r(-3,-13,6,1,O);
+
+      // SHOULDERS  staircase 6→10→14→20px
+      r(-3,-13,6,1,S); r(-5,-12,10,1,S); r(-7,-11,14,1,S); r(-10,-10,20,2,S);
+      r(-10,-10,4,1,SH); r(6,-10,4,1,SH);  // top highlight
+      r(-3,-13,6,1,SS);                      // neck-join shadow
+      // outline staircase
+      r(-3,-14,6,1,O);
+      r(-4,-13,1,1,O); r(3,-13,1,1,O);
+      r(-6,-12,1,1,O); r(5,-12,1,1,O);
+      r(-8,-11,1,1,O); r(7,-11,1,1,O);
+      r(-11,-10,1,2,O); r(10,-10,1,2,O);
+
+      // ARMS  3px, 1px gap from body sides, y=-8..+11
+      r(-13,-8,3,20,S); r(-13,-8,1,20,SH); r(-11,-8,1,20,SS);
+      r(-14,-8,1,20,O); r(-11,-8,1,20,O); r(-13,12,3,1,O);
+      r(10,-8,3,20,S);  r(12,-8,1,20,SH); r(10,-8,1,20,SS);
+      r(10,-8,1,20,O);  r(13,-8,1,20,O);  r(10,12,3,1,O);
+
+      // CHEST  14px wide y=-8..-2
+      r(-7,-8,14,7,S);
+      r(-7,-8,3,7,SH);  // left pec lit
+      r(5,-8,2,7,SS);   // right pec shadow
+      r(0,-8,1,5,SS);   // pec divide crease
+      r(-10,-8,2,2,SS); r(8,-8,2,2,SS);  // armpit shadow
+      r(-8,-8,1,7,O); r(7,-8,1,7,O);     // chest sides
+
+      // ABS  12px wide y=-1..+5
+      r(-6,-1,12,7,S);
+      r(-6,-1,3,7,SH); r(4,-1,2,7,SS);
+      r(0,-1,1,5,SS);   // center line
+      r(-5,3,10,1,SS);  // ab crease
+      r(-7,-1,1,1,O); r(6,-1,1,1,O);     // step-in pixels from chest
+      r(-7,-1,1,7,O); r(6,-1,1,7,O);
+      r(-6,6,12,1,O);
+
+      // BOXERS  18px wide y=7..+14  white
+      r(-9,7,18,8,WM);
+      r(-9,7,5,8,WH); r(5,7,4,8,WS);   // shading
+      r(-9,7,18,2,WH);                   // waistband bright
+      r(-1,7,2,8,WS);                    // center seam
+      r(-10,7,1,8,O); r(9,7,1,8,O);
+      r(-9,6,18,1,O); r(-9,15,18,1,O);
+      r(-9,15,5,1,O); r(4,15,5,1,O);    // leg opening outlines
+
+      // THIGHS  6px each, y=16..20
+      r(-9,16,6,5,S); r(-9,16,2,5,SH); r(-5,16,2,5,SS); r(-4,16,1,5,SD);
+      r(-10,16,1,5,O); r(-4,16,1,5,O); r(-9,21,6,1,O);
+      r(3,16,6,5,S);  r(7,16,2,5,SH);  r(3,16,2,5,SS);  r(3,16,1,5,SD);
+      r(3,16,1,5,O);  r(9,16,1,5,O);   r(3,21,6,1,O);
+
+      // KNEES  dark band y=22..23
+      r(-9,22,6,2,SS); r(-8,22,4,1,SD);
+      r(3,22,6,2,SS);  r(4,22,4,1,SD);
+      r(-10,22,1,2,O); r(-4,22,1,2,O);
+      r(3,22,1,2,O);   r(9,22,1,2,O);
+
+      // SHINS  5px, darker, y=24..28
+      r(-9,24,5,5,SS); r(-9,24,2,5,S); r(-5,24,1,5,SD);
+      r(-10,24,1,5,O); r(-5,24,1,5,O); r(-9,29,5,1,O);
+      r(4,24,5,5,SS);  r(7,24,2,5,S);  r(4,24,1,5,SD);
+      r(4,24,1,5,O);   r(9,24,1,5,O);  r(4,29,5,1,O);
+
+      // FEET  dark shoes y=30..33
+      r(-11,30,9,4,FK); r(-11,31,9,3,FD);
+      r(-12,30,1,4,O); r(-3,30,1,4,O); r(-11,30,9,1,O); r(-11,34,9,1,O);
+      r(2,30,9,4,FK);  r(2,31,9,3,FD);
+      r(2,30,1,4,O);  r(11,30,1,4,O); r(2,30,9,1,O); r(2,34,9,1,O);
+    }
+
+    // ── FEMALE ───────────────────────────────────────────────────────
+    function _tcFemale(ctx, cx, cy) {
+      const O="#1a0806";
+      const SH="#f2aa5c",S="#d07838",SS="#a04820",SD="#6a2c0c";
+      const HK="#402010",HM="#7a3c1c",HL="#9a5028";
+      const WH="#f8f8f8",WM="#d8d8d8",WS="#a8a8a8";
+      const FK="#2a1408",FD="#180c04";
+      function r(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(Math.round(cx+x),Math.round(cy+y),w,h);}
+
+      // LONG HAIR BEHIND HEAD (draw first — sits behind face)
+      r(-7,-26,2,20,HK); r(-7,-24,1,18,HM);  // left panel
+      r(5,-26,2,20,HK);  r(6,-24,1,18,HM);   // right panel
+
+      // HEAD  same 12px structure
+      r(-5,-28,10,1,HK); r(-6,-27,12,4,HK);
+      r(-5,-27,8,2,HM);  r(-4,-26,6,1,HL);
+      // No sideburns (long hair covers)
+      // Face
+      r(-5,-23,10,8,S);
+      r(-5,-23,3,8,SH);
+      r(4,-23,2,8,SS);
+      // Ears
+      r(-6,-22,1,3,S); r(-7,-22,1,3,O); r(-6,-19,1,1,O);
+      r(5,-22,1,3,S);  r(6,-22,1,3,O);  r(5,-19,1,1,O);
+      // Eyebrows (softer — 2px)
+      r(-4,-21,2,1,HK); r(2,-21,2,1,HK);
+      // Eyes slightly larger
+      r(-4,-20,3,2,O); r(-3,-19,1,1,S);
+      r(1,-20,3,2,O);  r(2,-19,1,1,S);
+      // Nose
+      r(-1,-18,1,1,SS);
+      // Lips fuller
+      r(-2,-16,4,1,SS); r(-2,-15,4,1,SD);
+      // Chin shadow
+      r(-3,-15,6,1,SD);
+      // Head outline
+      r(-5,-28,10,1,O); r(-6,-27,1,11,O); r(5,-27,1,11,O); r(-5,-16,10,1,O);
+
+      // NECK  slim 4px
+      r(-2,-16,4,4,S); r(-2,-16,1,4,SH); r(1,-16,1,4,SS);
+      r(-3,-16,1,4,O); r(2,-16,1,4,O); r(-2,-12,4,1,O);
+
+      // SHOULDERS  narrow staircase to 14px
+      r(-2,-12,4,1,S); r(-4,-11,8,1,S); r(-7,-10,14,2,S);
+      r(-7,-10,3,1,SH); r(4,-10,3,1,SH);  // top highlight
+      r(-2,-13,4,1,O);
+      r(-3,-12,1,1,O); r(2,-12,1,1,O);
+      r(-5,-11,1,1,O); r(4,-11,1,1,O);
+      r(-8,-10,1,2,O); r(7,-10,1,2,O);
+
+      // ARMS  2px slim, 1px gap, y=-8..+10
+      r(-10,-8,2,19,S); r(-10,-8,1,19,SH);
+      r(-11,-8,1,19,O); r(-9,-8,1,19,O); r(-10,11,2,1,O);
+      r(8,-8,2,19,S);   r(9,-8,1,19,SH);
+      r(8,-8,1,19,O);   r(10,-8,1,19,O); r(8,11,2,1,O);
+
+      // UPPER CHEST SKIN  y=-8..-2, 10px (shoulder width)
+      r(-5,-8,10,7,S); r(-5,-8,3,7,SH); r(4,-8,2,7,SS);
+      r(-6,-8,1,7,O); r(5,-8,1,7,O);
+
+      // BRA  14px wide y=-1..+5  white  (shoulder straps)
+      r(-7,-1,14,7,WM);
+      r(-7,-1,5,7,WH); r(4,-1,3,7,WS);  // left cup bright, right shadow
+      r(-1,-1,2,7,WS);                   // center divide
+      r(-7,4,14,2,WS);                   // band bottom shading
+      r(-7,-2,14,1,O); r(-7,6,14,1,O);
+      r(-8,-1,1,7,O);  r(7,-1,1,7,O);
+      // Shoulder straps 1px
+      r(-4,-10,1,9,WM); r(3,-10,1,9,WM);
+      r(-4,-10,1,1,O);  r(4,-10,1,1,O);  // strap top
+
+      // WAIST  8px hourglass y=7..+10
+      r(-4,7,8,4,S); r(-4,7,2,4,SH); r(2,7,2,4,SS);
+      r(-5,7,1,4,O); r(4,7,1,4,O);
+      r(-6,7,1,1,O); r(5,7,1,1,O);   // step in from bra
+      r(0,9,1,1,SS);                   // belly button
+      r(-4,11,8,1,O);
+
+      // HIPS/PANTIES  18px wide y=12..+18  white
+      r(-9,12,18,7,WM);
+      r(-9,12,6,7,WH); r(4,12,5,7,WS);  // shading
+      r(-9,12,18,2,WH);                  // waistband
+      r(-1,12,2,7,WS);                   // center seam
+      // Hip flare step from waist
+      r(-6,11,1,1,O); r(-7,11,1,1,O); r(-8,11,1,1,O);  // left staircase step
+      r(5,11,1,1,O);  r(6,11,1,1,O);  r(7,11,1,1,O);   // right staircase step
+      r(-10,12,1,7,O); r(9,12,1,7,O);
+      r(-9,11,18,1,O); r(-9,19,18,1,O);
+      r(-9,19,5,1,O);  r(4,19,5,1,O);   // leg openings
+
+      // THIGHS  5px each, y=20..24
+      r(-8,20,5,5,S); r(-8,20,2,5,SH); r(-5,20,2,5,SS); r(-4,20,1,5,SD);
+      r(-9,20,1,5,O); r(-4,20,1,5,O); r(-8,25,5,1,O);
+      r(3,20,5,5,S);  r(6,20,2,5,SH);  r(3,20,2,5,SS);  r(3,20,1,5,SD);
+      r(3,20,1,5,O);  r(8,20,1,5,O);   r(3,25,5,1,O);
+
+      // KNEES  dark band y=26..27
+      r(-8,26,5,2,SS); r(-7,26,3,1,SD);
+      r(3,26,5,2,SS);  r(4,26,3,1,SD);
+      r(-9,26,1,2,O); r(-4,26,1,2,O);
+      r(3,26,1,2,O);  r(8,26,1,2,O);
+
+      // SHINS  4px slim, y=28..32
+      r(-8,28,4,5,SS); r(-8,28,2,5,S); r(-5,28,1,5,SD);
+      r(-9,28,1,5,O); r(-5,28,1,5,O); r(-8,33,4,1,O);
+      r(4,28,4,5,SS);  r(6,28,2,5,S);  r(4,28,1,5,SD);
+      r(4,28,1,5,O);  r(8,28,1,5,O);  r(4,33,4,1,O);
+
+      // FEET  dark shoes y=34..37
+      r(-10,34,8,4,FK); r(-10,35,8,3,FD);
+      r(-11,34,1,4,O); r(-3,34,1,4,O); r(-10,34,8,1,O); r(-10,38,8,1,O);
+      r(2,34,8,4,FK);  r(2,35,8,3,FD);
+      r(2,34,1,4,O);  r(10,34,1,4,O); r(2,34,8,1,O); r(2,38,8,1,O);
+    }
+    // ══ END TEST CHAR ═════════════════════════════════════════════════
+
+    drawCharTest._btn = null;
+    // Console shortcut: chartest()
+    window.chartest = function() { menuPhase = "chartest"; };
+
     // --- Game Loop ---
     function loop() {
       if (menuPhase === "intro")      { drawIntro(); }
+      else if (menuPhase === "chartest")  { updateCharTest(); drawCharTest(); }
       else if (menuPhase === "profile")    { drawMenuProfile(); }
       else if (menuPhase === "title")      { drawMenuTitle(); }
+      else if (menuPhase === "credits")    { drawMenuCredits(); }
       else if (menuPhase === "corkboard") { drawMenuCorkboard(); if (journalOpen) drawJournal(); }
       else if (lostRound)     drawLose();
       else if (roundOver)     drawResult();
@@ -11807,6 +12497,13 @@
         _introPostAuth = "profile";
       }
     })();
+    // ── CHAR TEST MODE — set false to restore normal startup ─────────────
+    const CHAR_TEST_MODE = false;
+    if (CHAR_TEST_MODE) menuPhase = "chartest";
+    // ─────────────────────────────────────────────────────────────────────
+
+    // DEV: skip straight to game — remove showGame() call to restore normal startup
+    showGame();
     // Start the loop — profile screen first, then title after login
     loopRunning = true;
     loop();

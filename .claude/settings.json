@@ -7,7 +7,14 @@
       "Bash(python3 -:*)",
       "Bash(grep -v \"^.*//.*$\")",
       "Bash(python3 -c \":*)",
-      "Bash(grep -n 'menuPhase = \"\"title\"\"' /Users/cashcrunk/my-game/Haunted/index.html)"
+      "Bash(grep -n 'menuPhase = \"\"title\"\"' /Users/cashcrunk/my-game/Haunted/index.html)",
+      "Bash(node --input-type=module)",
+      "mcp__pixellab__get_topdown_tileset",
+      "Bash(curl --fail -s \"https://api.pixellab.ai/mcp/tilesets/45e91525-cf49-4d1a-812d-783adb40c133/image\" -o /Users/cashcrunk/Haunted/sprites/tiles/floor_wood.png)",
+      "Bash(curl --fail -s \"https://api.pixellab.ai/mcp/tilesets/62c4db1f-f234-4375-a316-4656bdaadaeb/image\" -o /Users/cashcrunk/Haunted/sprites/tiles/floor_bath.png)",
+      "Bash(curl --fail -s \"https://api.pixellab.ai/mcp/tilesets/8afab35a-4b65-4347-b989-82516979593f/image\" -o /Users/cashcrunk/Haunted/sprites/tiles/floor_concrete.png)",
+      "Bash(curl --fail -s \"https://api.pixellab.ai/mcp/tilesets/f5e836e1-c205-42bb-9b2a-c2a0e5abb6ea/image\" -o /Users/cashcrunk/Haunted/sprites/tiles/floor_grass.png)",
+      "Bash(curl --fail -s \"https://api.pixellab.ai/mcp/tilesets/5265926a-f6bd-4d2d-ba73-1d90b2aca31c/image\" -o /Users/cashcrunk/Haunted/sprites/tiles/wall.png)"
     ]
   }
 }
