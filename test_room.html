@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Room Test</title>
+  <style>
+    body { background: #111; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; font-family: monospace; color: #ccc; gap: 16px; }
+    canvas { image-rendering: pixelated; border: 1px solid #333; }
+    .controls { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    button { background: #222; color: #ccc; border: 1px solid #444; padding: 6px 14px; cursor: pointer; font-family: monospace; }
+    button:hover { background: #333; }
+    label { display: flex; align-items: center; gap: 6px; }
+    input[type=range] { width: 120px; }
+  </style>
+</head>
+<body>
+  <canvas id="c" width="400" height="400"></canvas>
+  <div class="controls">
+    <label>Wall H: <input type="range" id="wallH" min="0" max="64" value="20"> <span id="wallHVal">20</span>px</label>
+    <label>Tile:
+      <select id="tilePick">
+        <option value="wall">wall</option>
+        <option value="transition">wall_transition_wood</option>
+        <option value="wood">floor_wood</option>
+      </select>
+    </label>
+    <label>Sx: <input type="range" id="sx" min="0" max="96" step="32" value="96"> <span id="sxVal">96</span></label>
+    <label>Sy: <input type="range" id="sy" min="0" max="96" step="32" value="0"> <span id="syVal">0</span></label>
+  </div>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+
+const TILE = 32;
+
+const imgs = {
+  wall:       loadImg("sprites/tiles/wall.png"),
+  transition: loadImg("sprites/tiles/wall_transition_wood.png"),
+  wood:       loadImg("sprites/tiles/floor_wood.png"),
+};
+
+function loadImg(src) {
+  const i = new Image(); i.src = src; return i;
+}
+
+// Cache per (img, sx, sy)
+const _oc = {};
+function getTileCanvas(img, sx, sy) {
+  const key = `${img.src}_${sx}_${sy}`;
+  if (!_oc[key]) {
+    const oc = document.createElement("canvas");
+    oc.width = TILE; oc.height = TILE;
+    const c2 = oc.getContext("2d");
+    c2.imageSmoothingEnabled = false;
+    c2.drawImage(img, sx, sy, TILE, TILE, 0, 0, TILE, TILE);
+    _oc[key] = oc;
+  }
+  return _oc[key];
+}
+
+function fillTiled(img, sx, sy, x, y, w, h, fallback) {
+  if (!img.complete || !img.naturalWidth) {
+    ctx.fillStyle = fallback || "#444";
+    ctx.fillRect(x, y, w, h);
+    return;
+  }
+  const oc = getTileCanvas(img, sx, sy);
+  const pat = ctx.createPattern(oc, "repeat");
+  if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(x % TILE, y % TILE));
+  ctx.save();
+  ctx.fillStyle = pat;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+
+function getState() {
+  const wallH  = +document.getElementById("wallH").value;
+  const pick   = document.getElementById("tilePick").value;
+  const sx     = +document.getElementById("sx").value;
+  const sy     = +document.getElementById("sy").value;
+  return { wallH, img: imgs[pick], sx, sy };
+}
+
+function draw() {
+  ctx.clearRect(0, 0, 400, 400);
+  ctx.fillStyle = "#1a1a1a";
+  ctx.fillRect(0, 0, 400, 400);
+
+  const { wallH, img, sx, sy } = getState();
+
+  // Room floor (wood)
+  fillTiled(imgs.wood, 0, 96, 40, 40, 320, 320, "#3a2a1a");
+
+  // North wall strip using selected tile/settings
+  if (wallH > 0) {
+    fillTiled(img, sx, sy, 40, 40, 320, wallH, "#2a1f14");
+  }
+
+  // Room label
+  ctx.fillStyle = "#aaa";
+  ctx.font = "11px monospace";
+  ctx.fillText(`wall strip: ${wallH}px  tile sx:${sx} sy:${sy}`, 44, 380);
+}
+
+// Wire controls
+["wallH","sx","sy"].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener("input", () => {
+    document.getElementById(id+"Val").textContent = el.value;
+    draw();
+  });
+});
+document.getElementById("tilePick").addEventListener("change", draw);
+
+// Redraw when images load
+Object.values(imgs).forEach(i => i.onload = draw);
+draw();
+</script>
+</body>
+</html>

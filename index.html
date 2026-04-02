@@ -44,9 +44,222 @@
   <!-- Title screen replaced by canvas-drawn corkboard — see drawTitleScreen() -->
   <div id="titleScreen"></div>
 
+  <!-- Room test overlay — shown before game, dismissed by Continue button -->
+  <div id="roomTestOverlay" style="position:fixed;inset:0;background:#111;z-index:999;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:24px 16px;gap:16px;font-family:monospace;color:#ccc;">
+    <div style="font-size:14px;letter-spacing:2px;color:#888;">WALL STYLE TEST — WASD to move</div>
+    <canvas id="rtCanvas" width="480" height="400" style="image-rendering:pixelated;border:1px solid #333;width:864px;height:720px;"></canvas>
+
+    <!-- Per-room controls in a row -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:900px;">
+      <div style="background:#161616;border:1px solid #2a2a2a;padding:8px;display:flex;flex-direction:column;gap:5px;font-size:11px;">
+        <div style="color:#888;">ROOM 1 (top-left)</div>
+        <label>Wall H: <input type="range" class="rt-wallH" data-room="0" min="0" max="48" value="0" style="width:70px;"> <span class="rt-wallH-val">0</span>px</label>
+        <label>Tile: <select class="rt-tile" data-room="0" style="background:#222;color:#ccc;border:1px solid #333;font-family:monospace;font-size:11px;width:100%;">
+          <option value="wall">wall</option><option value="transition">transition</option><option value="wood">wood</option>
+        </select></label>
+        <label>Sx: <input type="range" class="rt-sx" data-room="0" min="0" max="96" step="32" value="0" style="width:70px;"> <span class="rt-sx-val">0</span></label>
+        <label>Sy: <input type="range" class="rt-sy" data-room="0" min="0" max="96" step="32" value="96" style="width:70px;"> <span class="rt-sy-val">96</span></label>
+      </div>
+      <div style="background:#161616;border:1px solid #2a2a2a;padding:8px;display:flex;flex-direction:column;gap:5px;font-size:11px;">
+        <div style="color:#888;">ROOM 2 (top-right)</div>
+        <label>Wall H: <input type="range" class="rt-wallH" data-room="1" min="0" max="48" value="16" style="width:70px;"> <span class="rt-wallH-val">16</span>px</label>
+        <label>Tile: <select class="rt-tile" data-room="1" style="background:#222;color:#ccc;border:1px solid #333;font-family:monospace;font-size:11px;width:100%;">
+          <option value="wall">wall</option><option value="transition" selected>transition</option><option value="wood">wood</option>
+        </select></label>
+        <label>Sx: <input type="range" class="rt-sx" data-room="1" min="0" max="96" step="32" value="96" style="width:70px;"> <span class="rt-sx-val">96</span></label>
+        <label>Sy: <input type="range" class="rt-sy" data-room="1" min="0" max="96" step="32" value="0" style="width:70px;"> <span class="rt-sy-val">0</span></label>
+      </div>
+      <div style="background:#161616;border:1px solid #2a2a2a;padding:8px;display:flex;flex-direction:column;gap:5px;font-size:11px;">
+        <div style="color:#888;">ROOM 3 (bottom-left)</div>
+        <label>Wall H: <input type="range" class="rt-wallH" data-room="2" min="0" max="48" value="24" style="width:70px;"> <span class="rt-wallH-val">24</span>px</label>
+        <label>Tile: <select class="rt-tile" data-room="2" style="background:#222;color:#ccc;border:1px solid #333;font-family:monospace;font-size:11px;width:100%;">
+          <option value="wall">wall</option><option value="transition" selected>transition</option><option value="wood">wood</option>
+        </select></label>
+        <label>Sx: <input type="range" class="rt-sx" data-room="2" min="0" max="96" step="32" value="96" style="width:70px;"> <span class="rt-sx-val">96</span></label>
+        <label>Sy: <input type="range" class="rt-sy" data-room="2" min="0" max="96" step="32" value="0" style="width:70px;"> <span class="rt-sy-val">0</span></label>
+      </div>
+      <div style="background:#161616;border:1px solid #2a2a2a;padding:8px;display:flex;flex-direction:column;gap:5px;font-size:11px;">
+        <div style="color:#888;">ROOM 4 (bottom-right)</div>
+        <label>Wall H: <input type="range" class="rt-wallH" data-room="3" min="0" max="48" value="32" style="width:70px;"> <span class="rt-wallH-val">32</span>px</label>
+        <label>Tile: <select class="rt-tile" data-room="3" style="background:#222;color:#ccc;border:1px solid #333;font-family:monospace;font-size:11px;width:100%;">
+          <option value="wall">wall</option><option value="transition" selected>transition</option><option value="wood">wood</option>
+        </select></label>
+        <label>Sx: <input type="range" class="rt-sx" data-room="3" min="0" max="96" step="32" value="0" style="width:70px;"> <span class="rt-sx-val">0</span></label>
+        <label>Sy: <input type="range" class="rt-sy" data-room="3" min="0" max="96" step="32" value="96" style="width:70px;"> <span class="rt-sy-val">96</span></label>
+      </div>
+    </div>
+
+    <button id="rtContinue" style="background:#1a2a1a;color:#8f8;border:1px solid #4a6;padding:10px 32px;font-family:monospace;font-size:13px;cursor:pointer;letter-spacing:2px;">CONTINUE TO GAME</button>
+  </div>
+
   <canvas id="gameCanvas"></canvas>
 
   <script>
+    // ── Room test overlay ──────────────────────────────────────────────
+    (function() {
+      const tc = document.getElementById("rtCanvas");
+      const tx = tc.getContext("2d");
+      tx.imageSmoothingEnabled = false;
+
+      const TILE = 32;
+      // Layout: 2×2 rooms with 20px wall gaps, 10px outer margin
+      // Room size: 200×170
+      const RW = 200, RH = 170, GAP = 20, MAR = 10;
+
+      // Room top-left corners
+      const RPOS = [
+        { x: MAR,           y: MAR },            // Room 0: top-left
+        { x: MAR+RW+GAP,    y: MAR },            // Room 1: top-right
+        { x: MAR,           y: MAR+RH+GAP },     // Room 2: bottom-left
+        { x: MAR+RW+GAP,    y: MAR+RH+GAP },     // Room 3: bottom-right
+      ];
+
+      // Door openings: { x, y, w, h } — walkable gaps in the wall
+      const DW = 38; // door width — matches real game doorways (38px)
+      const DOORS = [
+        // R0 ↔ R1: east wall of R0 / west wall of R1 (vertical door)
+        { x: MAR+RW, y: MAR+RH/2-DW/2, w: GAP, h: DW },
+        // R2 ↔ R3: east wall of R2 / west wall of R3
+        { x: MAR+RW, y: MAR+RH+GAP+RH/2-DW/2, w: GAP, h: DW },
+        // R0 ↔ R2: south wall of R0 / north wall of R2
+        { x: MAR+RW/2-DW/2, y: MAR+RH, w: DW, h: GAP },
+        // R1 ↔ R3: south wall of R1 / north wall of R3
+        { x: MAR+RW+GAP+RW/2-DW/2, y: MAR+RH, w: DW, h: GAP },
+      ];
+
+      // Walkable areas = rooms + door gaps (used for collision)
+      const WALKABLE = [
+        ...RPOS.map(r => ({ x: r.x, y: r.y, w: RW, h: RH })),
+        ...DOORS,
+      ];
+
+      const rtImgs = {
+        wall:       Object.assign(new Image(), { src: "sprites/tiles/wall.png" }),
+        transition: Object.assign(new Image(), { src: "sprites/tiles/wall_transition_wood.png" }),
+        wood:       Object.assign(new Image(), { src: "sprites/tiles/floor_wood.png" }),
+      };
+
+      const _rtOC = {};
+      function rtTileCanvas(img, sx, sy) {
+        const key = img.src + sx + sy;
+        if (!_rtOC[key]) {
+          const oc = document.createElement("canvas"); oc.width = TILE; oc.height = TILE;
+          const c2 = oc.getContext("2d"); c2.imageSmoothingEnabled = false;
+          c2.drawImage(img, sx, sy, TILE, TILE, 0, 0, TILE, TILE);
+          _rtOC[key] = oc;
+        }
+        return _rtOC[key];
+      }
+      function fillTiled(img, sx, sy, x, y, w, h, fb) {
+        if (!img.complete || !img.naturalWidth) { tx.fillStyle = fb||"#333"; tx.fillRect(x,y,w,h); return; }
+        const pat = tx.createPattern(rtTileCanvas(img, sx, sy), "repeat");
+        if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(x%TILE, y%TILE));
+        tx.save(); tx.fillStyle = pat; tx.fillRect(x,y,w,h); tx.restore();
+      }
+
+      function getRoomState(i) {
+        const els = (cls) => document.querySelectorAll(cls);
+        return {
+          wallH: +els(".rt-wallH")[i].value,
+          pick:   els(".rt-tile")[i].value,
+          sx:    +els(".rt-sx")[i].value,
+          sy:    +els(".rt-sy")[i].value,
+        };
+      }
+
+      // Player — same size and speed as main game (16×16, speed 1.9 at 60fps)
+      const PW = 16, PH = 16;
+      const rtPlayer = { x: RPOS[0].x + RW/2 - PW/2, y: RPOS[0].y + RH/2 - PH/2 };
+      const SPD = 1.9 * 60; // 1.9 px/frame × 60fps = 114 px/sec
+      const rtKeys = {};
+      let rtWalkCycle = 0, rtWalkAngle = Math.PI/2, rtIsMoving = false;
+
+      function overlaps(ax, ay, aw, ah, bx, by, bw, bh) {
+        return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
+      }
+      function inWalkable(x, y) {
+        return WALKABLE.some(r => overlaps(x, y, PW, PH, r.x, r.y, r.w, r.h));
+      }
+
+      let rtLast = 0;
+      function rtLoop(ts) {
+        if (document.getElementById("roomTestOverlay").style.display === "none") return;
+        const dt = Math.min((ts - rtLast) / 1000, 0.05);
+        rtLast = ts;
+
+        let dx = 0, dy = 0;
+        if (rtKeys["ArrowLeft"]  || rtKeys["a"] || rtKeys["A"]) dx -= 1;
+        if (rtKeys["ArrowRight"] || rtKeys["d"] || rtKeys["D"]) dx += 1;
+        if (rtKeys["ArrowUp"]    || rtKeys["w"] || rtKeys["W"]) dy -= 1;
+        if (rtKeys["ArrowDown"]  || rtKeys["s"] || rtKeys["S"]) dy += 1;
+        if (dx && dy) { dx *= 0.707; dy *= 0.707; }
+
+        rtIsMoving = !!(dx || dy);
+        if (rtIsMoving) { rtWalkAngle = Math.atan2(dy, dx); rtWalkCycle += dt * 8; }
+
+        const nx = rtPlayer.x + dx * SPD * dt;
+        const ny = rtPlayer.y + dy * SPD * dt;
+        if (inWalkable(nx, rtPlayer.y)) rtPlayer.x = nx;
+        if (inWalkable(rtPlayer.x, ny)) rtPlayer.y = ny;
+
+        // Draw
+        tx.fillStyle = "#0d0d0d"; tx.fillRect(0, 0, tc.width, tc.height);
+
+        // Wall texture fills whole map area (gaps between rooms = walls)
+        fillTiled(rtImgs.wall, 0, 96, MAR, MAR, RW*2+GAP, RH*2+GAP, "#2a1f14");
+
+        // Each room: floor + north wall strip
+        RPOS.forEach((r, i) => {
+          const { wallH, pick, sx, sy } = getRoomState(i);
+          fillTiled(rtImgs.wood, 0, 96, r.x, r.y, RW, RH, "#3a2a1a");
+          if (wallH > 0) fillTiled(rtImgs[pick], sx, sy, r.x, r.y, RW, wallH, "#2a1f14");
+        });
+
+        // Door gaps — draw floor through them
+        DOORS.forEach(d => {
+          fillTiled(rtImgs.wood, 0, 96, d.x, d.y, d.w, d.h, "#3a2a1a");
+        });
+
+        // Player — drawn same as main game via _drawPlayerSprite
+        // pcx/pcy is center of player rect (same convention as main game)
+        const pcx = Math.round(rtPlayer.x + PW/2);
+        const pcy = Math.round(rtPlayer.y + PH/2);
+        // Ground shadow
+        tx.fillStyle = "rgba(0,0,0,0.22)";
+        tx.beginPath(); tx.ellipse(pcx, pcy+8, 9, 3.5, 0, 0, Math.PI*2); tx.fill();
+        // Temporarily override globals _drawPlayerSprite relies on, then restore
+        const _saveMoving = isMoving, _saveAngle = walkAngle, _saveWalkAngle = playerAngle,
+              _saveWalkCycle = walkCycle;
+        // eslint-disable-next-line no-global-assign
+        isMoving = rtIsMoving; walkAngle = rtWalkAngle; playerAngle = rtWalkAngle;
+        walkCycle = rtWalkCycle;
+        _drawPlayerSprite(tx, pcx, pcy);
+        isMoving = _saveMoving; walkAngle = _saveAngle; playerAngle = _saveWalkAngle;
+        walkCycle = _saveWalkCycle;
+
+        requestAnimationFrame(rtLoop);
+      }
+
+      document.addEventListener("keydown", e => { rtKeys[e.key] = true; });
+      document.addEventListener("keyup",   e => { rtKeys[e.key] = false; });
+
+      document.querySelectorAll(".rt-wallH,.rt-sx,.rt-sy").forEach(el => {
+        el.addEventListener("input", () => {
+          const span = el.parentElement.querySelector("span");
+          if (span) span.textContent = el.value;
+        });
+      });
+
+      Object.values(rtImgs).forEach(img => { img.onload = () => {}; });
+
+      document.getElementById("rtContinue").addEventListener("click", () => {
+        document.getElementById("roomTestOverlay").style.display = "none";
+      });
+
+      requestAnimationFrame(rtLoop);
+    })();
+    // ──────────────────────────────────────────────────────────────────
+
     const canvas = document.getElementById("gameCanvas");
     canvas.style.imageRendering = "pixelated";
     const ctx = canvas.getContext("2d");
@@ -417,21 +630,15 @@
     });
     let _ghostSpriteFrame = 0, _ghostSpriteTimer = 0;
 
-    // Van interior sprites
-    const _vanMonitorsImg  = new Image(); _vanMonitorsImg.src  = "sprites/van/monitors.png";
-    const _vanPegboardImg  = new Image(); _vanPegboardImg.src  = "sprites/van/pegboard.png";
-    const _vanExteriorImg  = new Image(); _vanExteriorImg.src  = "sprites/van/exterior.png";
-    const _vanClockImg     = new Image(); _vanClockImg.src     = "sprites/van/clock.png";
 
-    // ── Tileset sprites (64×64 Wang sheets; solid tile at sx=0,sy=48,sw=16,sh=16) ──
-    const _tileSize = 16;
-    const _tileSolidSX = 0, _tileSolidSY = 48; // all-upper corner tile position
+    // ── Tileset sprites (128×128 Wang sheets at 32px; solid tile at sx=0,sy=96) ──
+    const _tileSize = 32;
+    const _tileSolidSX = 0, _tileSolidSY = 96; // all-upper corner tile in 4×4 grid of 32px tiles
 
     function _makeTilePattern(src) {
-      // Returns an object {img, pat} — pat is lazily created on first draw
       const obj = { img: new Image(), pat: null };
       obj.img.src = src;
-      obj.img.onload = () => { obj.pat = null; }; // reset pat so it's rebuilt after load
+      obj.img.onload = () => { obj.pat = null; }; // bust cache on load
       return obj;
     }
     const _tileWood     = _makeTilePattern("sprites/tiles/floor_wood.png");
@@ -440,29 +647,64 @@
     const _tileGrass    = _makeTilePattern("sprites/tiles/floor_grass.png");
     const _tileWall     = _makeTilePattern("sprites/tiles/wall.png");
     const _tileVan      = _makeTilePattern("sprites/tiles/floor_van.png");
+    // Wall-to-floor transition sheet — straight north-edge tile at sx:96,sy:0
+    const _tileWallTransition = _makeTilePattern("sprites/tiles/wall_transition_wood.png");
+    const _tileWallTransitionSX = 96, _tileWallTransitionSY = 0;
 
-    // Extract the solid tile from a tileset sheet into a small offscreen canvas,
-    // then create a repeating CanvasPattern from it for ctx.fillStyle.
+    // Extract the solid tile and return a CanvasPattern.
+    // Pattern is NOT cached on tileObj — caller supplies the live ctx so the
+    // pattern is always valid for the current canvas transform.
     function _getTilePattern(tileObj, drawCtx) {
-      if (tileObj.pat) return tileObj.pat;
       if (!tileObj.img.complete || !tileObj.img.naturalWidth) return null;
-      const oc = document.createElement("canvas");
-      oc.width = _tileSize; oc.height = _tileSize;
-      const oc2d = oc.getContext("2d");
-      oc2d.imageSmoothingEnabled = false;
-      oc2d.drawImage(tileObj.img, _tileSolidSX, _tileSolidSY, _tileSize, _tileSize, 0, 0, _tileSize, _tileSize);
-      tileObj.pat = drawCtx.createPattern(oc, "repeat");
-      return tileObj.pat;
+      if (!tileObj._oc) {
+        // Build the offscreen tile canvas once (reused across frames)
+        const oc = document.createElement("canvas");
+        oc.width = _tileSize; oc.height = _tileSize;
+        const oc2d = oc.getContext("2d");
+        oc2d.imageSmoothingEnabled = false;
+        oc2d.drawImage(tileObj.img, _tileSolidSX, _tileSolidSY, _tileSize, _tileSize, 0, 0, _tileSize, _tileSize);
+        tileObj._oc = oc;
+      }
+      return drawCtx.createPattern(tileObj._oc, "repeat");
     }
 
-    // Fill a rect with a tiled pattern; falls back to flatColor if not loaded yet.
+    // Fill a rect with a specific tile (sx,sy) from a sheet, tiled and world-anchored.
+    function _fillTiledFrom(drawCtx, tileObj, sx, sy, flatColor, x, y, w, h) {
+      if (!tileObj.img.complete || !tileObj.img.naturalWidth) {
+        drawCtx.fillStyle = flatColor; drawCtx.fillRect(x, y, w, h); return;
+      }
+      const cacheKey = `_oc_${sx}_${sy}`;
+      if (!tileObj[cacheKey]) {
+        const oc = document.createElement("canvas");
+        oc.width = _tileSize; oc.height = _tileSize;
+        const oc2d = oc.getContext("2d");
+        oc2d.imageSmoothingEnabled = false;
+        oc2d.drawImage(tileObj.img, sx, sy, _tileSize, _tileSize, 0, 0, _tileSize, _tileSize);
+        tileObj[cacheKey] = oc;
+      }
+      const pat = drawCtx.createPattern(tileObj[cacheKey], "repeat");
+      if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(x % _tileSize, y % _tileSize));
+      drawCtx.save();
+      drawCtx.fillStyle = pat;
+      drawCtx.fillRect(x, y, w, h);
+      drawCtx.restore();
+    }
+
+    // Fill a rect with a tiled pattern anchored to world coords.
+    // Uses pattern.setTransform so tiles are always aligned to the world grid,
+    // not the screen — prevents tiles swimming as the camera pans.
     function _fillTiled(drawCtx, tileObj, flatColor, x, y, w, h) {
       const pat = _getTilePattern(tileObj, drawCtx);
       if (pat) {
+        // Anchor pattern to world position so it doesn't swim when camera moves
+        if (pat.setTransform) {
+          const m = new DOMMatrix();
+          m.translateSelf(x % _tileSize, y % _tileSize);
+          pat.setTransform(m);
+        }
         drawCtx.save();
-        drawCtx.translate(x, y);
         drawCtx.fillStyle = pat;
-        drawCtx.fillRect(0, 0, w, h);
+        drawCtx.fillRect(x, y, w, h);
         drawCtx.restore();
       } else {
         drawCtx.fillStyle = flatColor;
@@ -675,8 +917,8 @@
       gameRunning = false;
       menuPhase = "corkboard";
       titleScreenActive = true;
-      player.x = 260;
-      player.y = 920;
+      player.x = 240;
+      player.y = 918;
     }
 
     function showGame() {
@@ -1238,8 +1480,8 @@
 
     // --- Player ---
     const player = {
-      x: 260,
-      y: 920,
+      x: 240,
+      y: 918,
       width: 16,
       height: 16,
       speed: 1.9,
@@ -1361,60 +1603,53 @@
       return doors.find(d => Math.hypot(cx - (d.x + d.w/2), cy - (d.y + d.h/2)) < 40);
     }
 
-    // ── Van layout constants (single source of truth — change here to move the whole van) ──
-    const VAN = {
-      // Outer body
-      ox:160, oy:870, ow:240, oh:100,
-      // Interior floor (inside the walls)
-      ix:172, iy:882, iw:202, ih:76,
-      // Derived
-      get iex() { return this.ix + this.iw; }, // interior east edge  (374)
-      get isx() { return this.ix; },            // interior west edge  (172)
-      get iny() { return this.iy; },            // interior north edge (882)
-      get isy() { return this.iy + this.ih; },  // interior south edge (958)
-      get icx() { return this.ix + this.iw/2; }, // interior center x  (273)
-      get icy() { return this.iy + this.ih/2; }, // interior center y  (920)
-    };
-
     // Van walls — three solid sides; east/back controlled by vanDoor
     const vanWalls = [
-      { x:VAN.ox,    y:VAN.oy,    w:VAN.ow, h:12  }, // north wall
-      { x:VAN.ox,    y:VAN.oy+VAN.oh-12, w:VAN.ow, h:12 }, // south wall
-      { x:VAN.ox,    y:VAN.oy,    w:12,  h:VAN.oh }, // west wall (cab)
+      { x:180, y:886, w:180, h:8  }, // north wall
+      { x:180, y:958, w:180, h:8  }, // south wall
+      { x:180, y:886, w:8,   h:80 }, // west wall (cab side)
       // Interior equipment collision
-      { x:VAN.ix,    y:VAN.iny,   w:VAN.iw, h:14  }, // north shelf (monitors + cork board + keypad)
-      { x:VAN.ix,    y:VAN.isy-12,w:VAN.iw, h:12  }, // south pegboard
-      { x:VAN.ix,    y:VAN.iny+14,w:16,     h:40  }, // CCTV west wall
+      { x:204, y:893, w:126, h:14 }, // north monitor shelf (threat monitor + cork board + four-panel + keypad)
+      { x:188, y:906, w:16,  h:40 }, // CCTV monitor on west wall
+      { x:204, y:948, w:142, h:10 }, // pegboard on south wall
     ];
 
     // Van rear door — starts closed; opens like a trailer ramp swinging east
     const vanDoor = { open: false };
 
     function nearVanDoor() {
-      return Math.hypot((player.x + 8) - VAN.iex, (player.y + 8) - VAN.icy) < 48;
+      // True when player is near the east/back wall of the van
+      return Math.hypot((player.x + 8) - 360, (player.y + 8) - 926) < 44;
     }
+
     function nearPegboard() {
-      return Math.hypot((player.x + 8) - VAN.icx, (player.y + 8) - VAN.isy) < 44;
+      // Pegboard is on the south interior wall — long side, around y:952, x:270
+      return Math.hypot((player.x + 8) - 270, (player.y + 8) - 950) < 40;
     }
+
     function nearKeypad() {
-      // NE corner keypad
-      return Math.hypot((player.x + 8) - (VAN.iex - 14), (player.y + 8) - VAN.iny) < 30;
+      // Keypad (leave-site) — north wall, east end after swap (~x:347, y:900)
+      return Math.hypot((player.x + 8) - 347, (player.y + 8) - 900) < 28;
     }
+
     function nearCCTV() {
-      // West wall CCTV desk
-      return Math.hypot((player.x + 8) - (VAN.ix + 8), (player.y + 8) - (VAN.iny + 32)) < 34;
+      // CCTV monitor — west wall (opposite the east opening), center (~x:196, y:926)
+      return Math.hypot((player.x + 8) - 196, (player.y + 8) - 926) < 32;
     }
+
     function nearDangerTimer() {
-      // North wall, west area threat monitor
-      return Math.hypot((player.x + 8) - (VAN.ix + 36), (player.y + 8) - VAN.iny) < 30;
+      // Threat monitor — north wall, west end after swap (~x:210, y:900)
+      return Math.hypot((player.x + 8) - 210, (player.y + 8) - 900) < 28;
     }
+
     function nearFourPanel() {
-      // North wall, east half monitors
-      return Math.hypot((player.x + 8) - (VAN.icx + 28), (player.y + 8) - VAN.iny) < 38;
+      // Four-panel monitor — north wall, right of cork board (~x:306, y:900)
+      return Math.hypot((player.x + 8) - 306, (player.y + 8) - 900) < 28;
     }
+
     function nearCorkBoard() {
-      // North wall, center-to-west cork board
-      return Math.hypot((player.x + 8) - (VAN.icx - 22), (player.y + 8) - VAN.iny) < 34;
+      // Cork board — north wall, shifted left (~x:255, y:898)
+      return Math.hypot((player.x + 8) - 255, (player.y + 8) - 898) < 28;
     }
 
     // Returns a flat list of all placed cameras (floor-placed + tripod-mounted)
@@ -2369,13 +2604,14 @@
         const nearWI = worldItems.find(it => Math.hypot((it.x + 6) - pcx, (it.y + 6) - pcy) < 30);
         if (nearWI && Math.hypot(wx - (nearWI.x + 6), wy - (nearWI.y + 6)) < TAP_R) return true;
         // Van rear door
-        if (nearVanDoor()     && Math.hypot(wx - VAN.iex,          wy - VAN.icy)        < TAP_R) return true;
-        if (nearKeypad()      && Math.hypot(wx - (VAN.iex-14),     wy - VAN.iny)        < TAP_R) return true;
-        if (nearPegboard()    && Math.hypot(wx - VAN.icx,          wy - VAN.isy)        < TAP_R) return true;
-        if (nearCCTV()        && Math.hypot(wx - (VAN.ix+8),       wy - (VAN.iny+32))   < TAP_R) return true;
-        if (nearDangerTimer() && Math.hypot(wx - (VAN.ix+36),      wy - VAN.iny)        < TAP_R) return true;
-        if (nearFourPanel()   && Math.hypot(wx - (VAN.icx+28),     wy - VAN.iny)        < TAP_R) return true;
-        if (nearCorkBoard()   && Math.hypot(wx - (VAN.icx-22),     wy - VAN.iny)        < TAP_R) return true;
+        if (nearVanDoor()     && Math.hypot(wx - 360, wy - 926) < TAP_R) return true;
+        // Van devices (world centres match nearX() target coordinates)
+        if (nearKeypad()      && Math.hypot(wx - 347, wy - 900) < TAP_R) return true;
+        if (nearPegboard()    && Math.hypot(wx - 270, wy - 950) < TAP_R) return true;
+        if (nearCCTV()        && Math.hypot(wx - 196, wy - 926) < TAP_R) return true;
+        if (nearDangerTimer() && Math.hypot(wx - 210, wy - 900) < TAP_R) return true;
+        if (nearFourPanel()   && Math.hypot(wx - 306, wy - 900) < TAP_R) return true;
+        if (nearCorkBoard()   && Math.hypot(wx - 255, wy - 898) < TAP_R) return true;
         // Light switches
         const swIdx = nearSwitch();
         if (swIdx >= 0) {
@@ -3246,10 +3482,10 @@
       ctx.scale(ZOOM, ZOOM);
       ctx.translate(-(player.x + 8), -(player.y + 8));
 
-      // Walls — tiled plaster texture
+      // Exterior perimeter walls
       walls.forEach(w => _fillTiled(ctx, _tileWall, "#2a1f14", w.x, w.y, w.w, w.h));
 
-      // Room floors — tiled by room type
+      // Room floors
       rooms.forEach(r => {
         _fillTiled(ctx, _roomTile(r.label), r.color, r.x, r.y, r.w, r.h);
       });
@@ -3668,154 +3904,165 @@
         ctx.restore();
       }
 
-      // ── VAN — box truck, cab west, back doors east ───────────────────────────
-      {
-        const { ox, oy, ow, oh, ix, iy, iw, ih, iex, iny, isy, icx, icy } = VAN;
+      // Van — top-down investigation van; cab (west/left), back doors (east/right)
+      // Drop shadow
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillRect(184, 890, 184, 82);
 
-        // Exterior sprite (180×180 Pixel Lab image — we crop + scale to fit)
-        const _vanExt = _vanExteriorImg;
-        if (_vanExt.complete && _vanExt.naturalWidth > 0) {
-          ctx.drawImage(_vanExt, ox - 4, oy - 8, ow + 8, oh + 16);
-        } else {
-          // Procedural fallback — white box truck body
-          ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.fillRect(ox+4, oy+6, ow, oh);
-          ctx.fillStyle = "#d8dce0"; ctx.fillRect(ox, oy, ow, oh); // white body
-          ctx.fillStyle = "#e87820"; ctx.fillRect(ox+44, oy+4, ow-48, 8); // orange stripe
-          ctx.fillStyle = "#b0b8c0"; ctx.fillRect(ox, oy, 44, oh);        // cab section
-          // Wheels
-          ctx.fillStyle = "#1a1a1a";
-          ctx.fillRect(ox+6,    oy-4,  18, 8);
-          ctx.fillRect(ox+ow-24,oy-4,  18, 8);
-          ctx.fillRect(ox+6,    oy+oh-4,18, 8);
-          ctx.fillRect(ox+ow-24,oy+oh-4,18, 8);
-        }
+      // Outer body
+      ctx.fillStyle = "#1e2d3a";
+      ctx.fillRect(180, 886, 180, 80);
 
-        // ── Interior floor (wood tile) ───────────────────────────────────────
-        _fillTiled(ctx, _tileWood, "#c8a870", ix, iy, iw, ih);
+      // Roof surface (interior floor visible through roof cutaway)
+      ctx.fillStyle = "#28384a";
+      ctx.fillRect(188, 894, 164, 64);
 
-        // ── North wall shelf (the strip where all monitors + cork board live) ─
-        ctx.fillStyle = "#2a1e10"; ctx.fillRect(ix, iny, iw, 14);
+      // North side wall highlight (top edge — light hits it)
+      ctx.fillStyle = "#3a5068";
+      ctx.fillRect(188, 894, 164, 5);
 
-        // ── South wall — pegboard ────────────────────────────────────────────
-        if (_vanPegboardImg.complete && _vanPegboardImg.naturalWidth > 0) {
-          ctx.drawImage(_vanPegboardImg, ix, isy - 14, iw, 14);
-        } else {
-          ctx.fillStyle = "#3a2a10"; ctx.fillRect(ix, isy - 14, iw, 14);
-        }
+      // South side wall shading (bottom edge — in shadow)
+      ctx.fillStyle = "#141e28";
+      ctx.fillRect(188, 953, 164, 5);
 
-        // ── West wall — NW desk (clock + surface) ────────────────────────────
-        const deskW = 38, deskH = 28;
-        ctx.fillStyle = "#5a3a18"; ctx.fillRect(ix, iny + 14, deskW, deskH); // desk top
-        ctx.fillStyle = "#3a2210"; ctx.fillRect(ix, iny + 14, deskW, 3);     // desk front edge
-        // Clock on the desk
-        const _clk = _vanClockImg;
-        if (_clk.complete && _clk.naturalWidth > 0) {
-          ctx.drawImage(_clk, ix + 4, iny + 17, 16, 16);
-        } else {
-          ctx.fillStyle = "#e0e0e0"; ctx.beginPath();
-          ctx.arc(ix + 12, iny + 25, 7, 0, Math.PI*2); ctx.fill();
-          ctx.strokeStyle = "#333"; ctx.lineWidth = 1; ctx.stroke();
-        }
+      // Cab bulkhead (west interior wall — dark divider)
+      ctx.fillStyle = "#0e1820";
+      ctx.fillRect(188, 894, 14, 64);
 
-        // ── West wall — CCTV monitor on desk ────────────────────────────────
-        const cctvHasCams = getPlacedCameras().length > 0;
-        const cctvX = ix, cctvY = iny + 14 + deskH, cctvW = 16, cctvH = 34;
-        ctx.fillStyle = "#101820"; ctx.fillRect(cctvX, cctvY, cctvW, cctvH);
-        ctx.fillStyle = "#0a1218"; ctx.fillRect(cctvX+1, cctvY+2, cctvW-2, cctvH-4);
-        ctx.fillStyle = cctvHasCams ? "#102818" : "#060e14";
-        ctx.fillRect(cctvX+2, cctvY+3, cctvW-4, cctvH-6);
-        if (cctvHasCams) {
-          const half = Math.floor((cctvW-6)/2);
-          const qh   = Math.floor((cctvH-8)/2);
-          ctx.fillStyle = "#1a3020";
-          ctx.fillRect(cctvX+3, cctvY+4,         half, qh);
-          ctx.fillRect(cctvX+3+half+1, cctvY+4,  half, qh);
-          ctx.fillRect(cctvX+3, cctvY+4+qh+1,    half, qh);
-          ctx.fillRect(cctvX+3+half+1, cctvY+4+qh+1, half, qh);
-          ctx.fillStyle = (Date.now() % 1200 < 700) ? "#40ff80" : "#103820";
-          ctx.beginPath(); ctx.arc(cctvX+cctvW-3, cctvY+4, 1.5, 0, Math.PI*2); ctx.fill();
-        } else {
-          ctx.fillStyle = "#0d141e";
-          for (let sy = cctvY+4; sy < cctvY+cctvH-4; sy += 3)
-            ctx.fillRect(cctvX+2, sy, cctvW-4, 2);
-        }
-        ctx.fillStyle = "#3a6888"; ctx.font = "4px monospace"; ctx.textAlign = "center";
-        ctx.fillText("CAM", cctvX + cctvW/2, cctvY + cctvH + 5);
+      // Cab window slots (small north+south portholes on cab)
+      ctx.fillStyle = "#1a3040";
+      ctx.fillRect(182, 896, 6, 14); // north porthole
+      ctx.fillRect(182, 952, 6, 14); // south porthole
 
-        // ── North wall: cork board (center → west) ───────────────────────────
-        const cbStartX = ix + deskW + 2;       // just east of the desk
-        const cbEndX   = icx;
-        const cbW      = cbEndX - cbStartX;
-        ctx.fillStyle = "#5c3a10"; ctx.fillRect(cbStartX, iny, cbW, 14); // cork backing
-        ctx.fillStyle = "#7a5020"; ctx.fillRect(cbStartX+1, iny+1, cbW-2, 12); // cork surface
-        // Pinned note scraps
-        [[0.15,"#e8d890"],[0.4,"#a0d8c0"],[0.65,"#e8b090"],[0.85,"#c0d0e8"]].forEach(([t,col]) => {
-          ctx.fillStyle = col; ctx.fillRect(cbStartX + cbW*t, iny+2, 8, 8);
-          ctx.fillStyle = "#c83030"; ctx.beginPath();
-          ctx.arc(cbStartX + cbW*t + 4, iny+2, 1.5, 0, Math.PI*2); ctx.fill();
-        });
+      // Monitor shelf on north interior wall (long bench, top-down)
+      ctx.fillStyle = "#1a2830";
+      ctx.fillRect(206, 895, 120, 10); // shelf surface
+      ctx.fillStyle = "#0a1830"; // monitor screen (dark blue glow)
+      ctx.fillRect(210, 896, 28, 7);
+      ctx.fillStyle = "#001820";
+      ctx.fillRect(242, 896, 28, 7);
+      // Monitor screen glow
+      ctx.fillStyle = "rgba(40,120,200,0.25)";
+      ctx.fillRect(210, 896, 28, 7);
+      ctx.fillRect(242, 896, 28, 7);
 
-        // ── North wall: threat monitor (small, left of cork board) ──────────
-        const tmX = ix + deskW + 2, tmY = iny;
-        // It actually overlaps cork board slightly on the left — draw over it
-        const tmSafe = !safeTimeOver;
-        ctx.fillStyle = "#101410"; ctx.fillRect(tmX - deskW + 2, tmY, 26, 14);
-        ctx.fillStyle = tmSafe ? "#0a1f0a" : "#1f0a0a"; ctx.fillRect(tmX - deskW + 4, tmY+2, 22, 10);
-        const tmBlink = (Date.now() % 900 < 500);
-        ctx.fillStyle = tmSafe ? (tmBlink ? "#40e840" : "#0d2a0d") : (tmBlink ? "#ff4040" : "#2a0d0d");
-        ctx.beginPath(); ctx.arc(tmX - deskW + 22, tmY+6, 2, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = tmSafe ? "#3a8838" : "#883838"; ctx.font = "4px monospace"; ctx.textAlign = "left";
-        ctx.fillText("THR", tmX - deskW + 5, tmY + 10);
+      // South interior wall — pegboard (long side)
+      ctx.fillStyle = "#2e2214"; // pegboard board
+      ctx.fillRect(206, 948, 140, 10);
+      ctx.fillStyle = "#4a3820"; // peg holes
+      for (let ph = 0; ph < 14; ph++) ctx.fillRect(210 + ph * 9, 951, 2, 2);
+      // Hanging items (small colored stubs = equipment silhouettes)
+      const pegItems = [
+        { x:211, c:"#4a8ab0" }, // EMF Reader — blue
+        { x:220, c:"#4a8ab0" },
+        { x:232, c:"#7a5a30" }, // Spirit Box — brown
+        { x:241, c:"#7a5a30" },
+        { x:253, c:"#8a7a20" }, // UV Flashlight — yellow
+        { x:264, c:"#4a6a30" }, // Ghost Book — green
+        { x:274, c:"#6a6a6a" }, // Video Camera — gray
+        { x:283, c:"#6a6a6a" },
+        { x:295, c:"#8a3a3a" }, // Thermometer — red
+      ];
+      pegItems.forEach(p => {
+        ctx.fillStyle = p.c;
+        ctx.fillRect(p.x, 944, 5, 7);
+      });
 
-        // ── North wall: 4-monitor array (2×2, center → east) ────────────────
-        const monStartX = icx + 2;
-        const monEndX   = iex - 22; // leave room for keypad
-        const mW = Math.floor((monEndX - monStartX - 4) / 2); // each monitor width
-        const mH = 6; // each monitor height (it's a top-down sliver)
-        const monColors = ["#0a1830","#0a2018","#181028","#102018"];
-        const monGlow   = ["rgba(40,100,220,0.3)","rgba(40,180,120,0.25)","rgba(120,60,200,0.25)","rgba(40,160,100,0.2)"];
-        for (let row = 0; row < 2; row++) {
-          for (let col = 0; col < 2; col++) {
-            const mx = monStartX + col * (mW + 2);
-            const my = iny + row * (mH + 2);
-            ctx.fillStyle = "#1a1820"; ctx.fillRect(mx-1, my-1, mW+2, mH+2); // bezel
-            ctx.fillStyle = monColors[row*2+col]; ctx.fillRect(mx, my, mW, mH);
-            ctx.fillStyle = monGlow[row*2+col]; ctx.fillRect(mx, my, mW, mH);
-          }
-        }
-        // "MONITORS" label below the array
-        ctx.fillStyle = "#2a5070"; ctx.font = "4px monospace"; ctx.textAlign = "center";
-        ctx.fillText("MONITORS", monStartX + (monEndX - monStartX)/2, iny + 16);
-
-        // ── NE corner — keypad ───────────────────────────────────────────────
-        const kpX = iex - 20, kpY = iny;
-        ctx.fillStyle = "#1e2830"; ctx.fillRect(kpX, kpY, 18, 14);
-        ctx.strokeStyle = "#4a8ab0"; ctx.lineWidth = 1; ctx.strokeRect(kpX, kpY, 18, 14);
-        ctx.fillStyle = vanDoor.open ? "#40e840" : "#e84040";
-        ctx.fillRect(kpX+3, kpY+4, 4, 4);
-        ctx.fillStyle = "#6aaad0"; ctx.font = "4px monospace"; ctx.textAlign = "left";
-        ctx.fillText("KPD", kpX+8, kpY+10);
-
-        // ── East — back doors ───────────────────────────────────────────────
-        if (!vanDoor.open) {
-          ctx.fillStyle = "#2a3820"; ctx.fillRect(iex, iny, 10, ih);
-          ctx.fillStyle = "#3a5030"; ctx.fillRect(iex+3, iny, 2, ih); // door seam
-          ctx.fillStyle = "#1a2810"; ctx.fillRect(iex, iny, 10, 3);   // top edge shadow
-        } else {
-          // Doors folded open against the east wall — drawn as planks going south
-          ctx.fillStyle = "#2a3820";
-          ctx.fillRect(iex+2, iny,          8, ih/2 - 2);
-          ctx.fillRect(iex+2, iny+ih/2 + 2, 8, ih/2 - 2);
-          // Ramp / loading floor extending east
-          ctx.fillStyle = "#3a4828"; ctx.fillRect(iex+10, iny+8, 36, ih-16);
-          for (let ry = iny+12; ry < isy-12; ry += 6) {
-            ctx.fillStyle = "#2a3820"; ctx.fillRect(iex+12, ry, 32, 2);
-          }
-        }
-
-        ctx.textAlign = "left";
+      // Back doors (east) — closed: dark panel; open: ramp east
+      if (!vanDoor.open) {
+        ctx.fillStyle = "#141e14";
+        ctx.fillRect(352, 894, 8, 64);
+        ctx.fillStyle = "#1e3020"; // door seam
+        ctx.fillRect(355, 894, 2, 64);
+      } else {
+        ctx.fillStyle = "#141e14"; // ramp lying east
+        ctx.fillRect(360, 900, 42, 52);
+        ctx.fillStyle = "#1e3020"; // slats
+        for (let ry = 904; ry < 950; ry += 7) ctx.fillRect(362, ry, 38, 3);
       }
-      // ── end van ─────────────────────────────────────────────────────────────
+
+      // Wheels — top-down ovals (north + south, front + rear)
+      ctx.fillStyle = "#0a0a0a";
+      ctx.fillRect(192, 883, 22, 6);  // north-front wheel
+      ctx.fillRect(320, 883, 22, 6);  // north-rear wheel
+      ctx.fillRect(192, 963, 22, 6);  // south-front wheel
+      ctx.fillRect(320, 963, 22, 6);  // south-rear wheel
+      // Wheel highlight
+      ctx.fillStyle = "#1a1a1a";
+      ctx.fillRect(193, 884, 20, 2);
+      ctx.fillRect(321, 884, 20, 2);
+      ctx.fillRect(193, 964, 20, 2);
+      ctx.fillRect(321, 964, 20, 2);
+
+      // Van label
+      ctx.font = "8px monospace";
+      ctx.fillStyle = "#3a5878";
+      ctx.textAlign = "center";
+      ctx.fillText("INVESTIGATION VAN", 270, 935);
+      ctx.textAlign = "left";
+
+      // Threat monitor — north wall, west end (~x:200-226, y:893-910) [swapped from keypad]
+      const tmSafe = !safeTimeOver;
+      ctx.fillStyle = "#101410"; ctx.fillRect(200, 893, 26, 17); // housing
+      ctx.fillStyle = "#0a0e08"; ctx.fillRect(202, 895, 22, 13); // bezel
+      ctx.fillStyle = tmSafe ? "#0d1f0d" : "#1f0d0d"; ctx.fillRect(203, 896, 20, 9); // screen tint
+      const tmBlink = (Date.now() % 900 < 500);
+      ctx.fillStyle = tmSafe ? (tmBlink ? "#40e840" : "#103010") : (tmBlink ? "#ff4040" : "#301010");
+      ctx.beginPath(); ctx.arc(221, 898, 1.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = tmSafe ? "#3a6838" : "#683838"; ctx.font = "4px monospace";
+      ctx.fillText("THR", 204, 912);
+
+      // Van keypad device — north wall, east end (~x:332-352, y:895-909) [swapped from threat monitor]
+      ctx.fillStyle = "#1e2830";
+      ctx.fillRect(332, 895, 20, 14);
+      ctx.strokeStyle = "#4a8ab0"; ctx.lineWidth = 1;
+      ctx.strokeRect(332, 895, 20, 14);
+      ctx.fillStyle = vanDoor.open ? "#40e840" : "#e84040";
+      ctx.fillRect(335, 898, 4, 4);
+      ctx.fillStyle = "#6aaad0"; ctx.font = "5px monospace";
+      ctx.fillText("KPD", 342, 906);
+
+      // CCTV monitor — west wall (opposite east opening), portrait-mounted (~x:188-203, y:906-946)
+      const cctvHasCams = getPlacedCameras().length > 0;
+      ctx.fillStyle = "#101820"; ctx.fillRect(188, 906, 15, 40); // housing (west wall face)
+      ctx.fillStyle = "#0a1218"; ctx.fillRect(189, 908, 13, 36); // bezel
+      ctx.fillStyle = cctvHasCams ? "#102818" : "#080e14"; ctx.fillRect(190, 909, 11, 34); // screen
+      if (cctvHasCams) {
+        ctx.fillStyle = "#1a3020";
+        ctx.fillRect(190, 909, 4, 16); ctx.fillRect(195, 909, 4, 16);
+        ctx.fillRect(190, 926, 4, 16); ctx.fillRect(195, 926, 4, 16);
+        ctx.fillStyle = "#204030";
+        ctx.fillRect(190, 909, 2, 6); ctx.fillRect(195, 909, 2, 6);
+        ctx.fillStyle = (Date.now() % 1200 < 700) ? "#40ff80" : "#103820";
+        ctx.beginPath(); ctx.arc(200, 910, 1.5, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = "#111820";
+        for (let sy = 910; sy < 942; sy += 3) ctx.fillRect(190, sy, 11, 2);
+      }
+      ctx.fillStyle = "#3a6888"; ctx.font = "4px monospace";
+      ctx.fillText("CAM", 205, 926);
+
+      // Cork board — north wall, shifted left (~x:230-280, y:893-908)
+      ctx.fillStyle = "#3a2a10"; ctx.fillRect(230, 893, 50, 14); // frame
+      ctx.fillStyle = "#7a5c28"; ctx.fillRect(232, 895, 46, 10); // cork surface
+      // Pin dots
+      ctx.fillStyle = "#c89030";
+      ctx.beginPath(); ctx.arc(235, 898, 1.2, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(252, 898, 1.2, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(275, 898, 1.2, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = "#4a3218"; ctx.font = "4px monospace";
+      ctx.fillText("BOARD", 243, 912);
+
+      // Four-panel monitor — north wall, right of cork board (~x:284-329, y:893-906)
+      ctx.fillStyle = "#101418"; ctx.fillRect(284, 893, 45, 13); // housing
+      ctx.fillStyle = "#080c10"; ctx.fillRect(286, 894, 41, 10); // bezel
+      // 4 mini screen quadrants
+      ctx.fillStyle = "#0a1820"; ctx.fillRect(287, 895, 18, 4); ctx.fillRect(308, 895, 18, 4);
+      ctx.fillStyle = "#0a1820"; ctx.fillRect(287, 900, 18, 3); ctx.fillRect(308, 900, 18, 3);
+      ctx.fillStyle = "#1a3040"; ctx.fillRect(287, 895, 6, 2); ctx.fillRect(308, 895, 6, 2);
+      ctx.fillStyle = "#204050"; ctx.fillRect(287, 900, 6, 2); ctx.fillRect(308, 900, 6, 2);
+      ctx.fillStyle = "#2a4860"; ctx.font = "4px monospace";
+      ctx.fillText("4MNT", 292, 908);
 
       // --- Furniture (valid camera surfaces) ---
       // Draw before worldItems so camera placed on furniture renders on top of it (not behind it)
