@@ -218,6 +218,7 @@
     const INTRO_DUR = [1.0, 2.4, 0.8, 0.8, 2.2, 0.7];
     let titleScreenActive = true;   // convenience alias: true when menuPhase !== null
     let _corkboardPage = 0;         // active board index: 0=Map 1=Loadout 2=Investigator
+    let _menuTouchFeedback = null;  // mobile: { x, y, timer } ripple at last tapped position
     const CORKBOARD_PAGES = 3;
     let _selectedMapId    = 0;      // which map is highlighted (0 = The Farmhouse)
     let _titleMx = 0, _titleMy = 0; // canvas-space mouse position for hover states
@@ -2165,6 +2166,12 @@
       const mobPegSwipe = { active: false, id: null, startX: 0, startScrollX: 0, moved: false };
       function _resetPegSwipe() { mobPegSwipe.active = false; mobPegSwipe.id = null; mobPegSwipe.moved = false; }
 
+      // ── Corkboard / menu-screen swipe+tap state ──────────────────────────────
+      // Tracks a single touch through start→end to decide tap (fire click) vs swipe (change page).
+      const _corkSwipe = { active: false, id: null, startX: 0, startY: 0, clientX: 0, clientY: 0 };
+      function _resetCorkSwipe() { _corkSwipe.active = false; _corkSwipe.id = null; }
+      // _menuTouchFeedback is declared in outer scope (accessible from loop()) — written here.
+
       // ── Journal slider drag state ────────────────────────────────────────────
       // Geometry constants must exactly match the drawJournal mobile tab-2 layout.
       //   jy=52, lx=44, lw=358  →  trackX=58, trackW=308
@@ -2224,6 +2231,25 @@
           mobilePinch.id0      = e.touches[0].identifier;
           mobilePinch.id1      = e.touches[1].identifier;
           return; // do not process individual new touches as buttons/joy/look
+        }
+
+        // ── Menu screens (corkboard / title / profile) ───────────────────────
+        // Record touch start for tap-vs-swipe detection; touchend does the dispatch.
+        // Return early so in-game joystick/button logic is never entered on menu screens.
+        if (menuPhase !== null && menuPhase !== "chartest") {
+          for (const t of e.changedTouches) {
+            const { x, y } = _tc(t);
+            if (!_corkSwipe.active) {
+              _corkSwipe.active  = true;
+              _corkSwipe.id      = t.identifier;
+              _corkSwipe.startX  = x;
+              _corkSwipe.startY  = y;
+              _corkSwipe.clientX = t.clientX;
+              _corkSwipe.clientY = t.clientY;
+              console.log(`[Touch:Menu] touchstart ${menuPhase} @ canvas (${x|0}, ${y|0})`);
+            }
+          }
+          return; // do NOT fall into in-game button/joystick handling
         }
 
         for (const t of e.changedTouches) {
@@ -2448,6 +2474,38 @@
 
       function _touchEnd(e) {
         e.preventDefault();
+
+        // ── Menu screen tap / swipe ──────────────────────────────────────────
+        // Decide on touchend so a proper swipe threshold can be checked.
+        if (menuPhase !== null) {
+          for (const t of e.changedTouches) {
+            if (!_corkSwipe.active || t.identifier !== _corkSwipe.id) continue;
+            const { x } = _tc(t);
+            const dx = x - _corkSwipe.startX;
+            // Capture before reset
+            const sx = _corkSwipe.startX, sy = _corkSwipe.startY;
+            const cx = _corkSwipe.clientX, cy = _corkSwipe.clientY;
+            _resetCorkSwipe();
+
+            if (Math.abs(dx) > 60) {
+              // Horizontal swipe → navigate corkboard pages (left=next, right=prev)
+              if (menuPhase === "corkboard") {
+                _corkboardNav(dx < 0 ? +1 : -1);
+                console.log(`[Touch:Menu] swipe ${dx < 0 ? '→ next' : '← prev'} page (dx=${dx|0})`);
+              }
+            } else {
+              // Tap — fire a synthetic click so the shared click handler processes it
+              console.log(`[Touch:Menu] tap @ canvas (${sx|0}, ${sy|0}) menuPhase=${menuPhase}`);
+              canvas.dispatchEvent(new MouseEvent('click', {
+                bubbles: true, cancelable: true,
+                clientX: cx, clientY: cy,
+              }));
+              _menuTouchFeedback = { x: sx, y: sy, timer: 0.25 };
+            }
+          }
+          return; // don't run in-game touchend logic on menu screens
+        }
+
         for (const t of e.changedTouches) {
           if (t.identifier === mobileJoy.id) _resetJoy();
 
@@ -2500,6 +2558,7 @@
       canvas.addEventListener("touchend",    _touchEnd, { passive: false });
       canvas.addEventListener("touchcancel", e => {
         _resetJoy(); _resetLook(); _resetPinch(); _resetSliderDrag(); _resetPegSwipe();
+        _resetCorkSwipe();
         mobileSprinting = false; mobileSprintId = null;
       }, { passive: false });
 
@@ -2682,34 +2741,55 @@
         // Goryo (no_room_migration) stays in its favorite room; others roam freely
         const ghostConfine = currentGhost?.specialRules?.includes("no_room_migration") ? ghostFavRoom : null;
 
-        // BFS room path from ghost's current position to targetRoom.
-        // Returns ordered array of rooms to visit (excludes start, includes target).
+        // BFS room path — returns ordered {x,y,isDoorway?,room?} waypoints.
+        // Each room transition inserts the doorway centre first so the ghost routes through
+        // actual openings instead of walking straight through walls.
         function ghostPathTo(targetRoom) {
           const start = _roomAtPoint(ghostX, ghostY) || ghostFavRoom;
           if (!start || !targetRoom || start === targetRoom) return [];
           const queue = [[start]];
           const visited = new Set([start]);
-          while (queue.length) {
-            const cur_path = queue.shift();
-            const cur = cur_path[cur_path.length - 1];
+          let roomSeq = null;
+          outer: while (queue.length) {
+            const cp = queue.shift();
+            const cur = cp[cp.length - 1];
             for (const nbr of (roomGraph.get(cur) || [])) {
-              if (nbr === targetRoom) return cur_path.slice(1).concat([nbr]);
-              if (!visited.has(nbr)) { visited.add(nbr); queue.push([...cur_path, nbr]); }
+              if (nbr === targetRoom) { roomSeq = [...cp, nbr]; break outer; }
+              if (!visited.has(nbr)) { visited.add(nbr); queue.push([...cp, nbr]); }
             }
           }
-          return [targetRoom]; // unreachable fallback — head there directly
+          if (!roomSeq) return [{ x: targetRoom.x + targetRoom.w/2, y: targetRoom.y + targetRoom.h/2, room: targetRoom }];
+          // Build waypoint list: doorway centre between each room pair, then final room centre
+          const wps = [];
+          for (let i = 0; i < roomSeq.length - 1; i++) {
+            const rA = roomSeq[i], rB = roomSeq[i + 1];
+            const dw = doorways.find(d =>
+              d.x < rA.x + rA.w && d.x + d.w > rA.x && d.y < rA.y + rA.h && d.y + d.h > rA.y &&
+              d.x < rB.x + rB.w && d.x + d.w > rB.x && d.y < rB.y + rB.h && d.y + d.h > rB.y
+            );
+            if (dw) wps.push({ x: dw.x + dw.w/2, y: dw.y + dw.h/2, isDoorway: true });
+          }
+          wps.push({ x: targetRoom.x + targetRoom.w/2, y: targetRoom.y + targetRoom.h/2, room: targetRoom });
+          return wps;
         }
 
         // Pick next movement waypoint.
-        // If a BFS path is active, aim for the next room's centre; otherwise wander in ghostFavRoom.
+        // Follows the BFS waypoint list (doorways + room centres); wanders once arrived.
         function pickGhostTarget() {
           if (ghostPath.length > 0 && ghostPathIdx < ghostPath.length) {
-            const wr = ghostPath[ghostPathIdx];
-            ghostTargetX = wr.x + wr.w / 2;
-            ghostTargetY = wr.y + wr.h / 2;
+            const wp = ghostPath[ghostPathIdx];
+            ghostTargetX = wp.x;
+            ghostTargetY = wp.y;
+            // Pre-open any door sitting at this doorway so the ghost isn't blocked
+            if (wp.isDoorway) {
+              const dAtWp = doors.find(d => !d.open &&
+                Math.hypot((d.x + d.w/2) - wp.x, (d.y + d.h/2) - wp.y) < 22
+              );
+              if (dAtWp) dAtWp.open = true;
+            }
             return;
           }
-          // Arrived — wander randomly inside ghostFavRoom
+          // Arrived at ghostFavRoom — wander randomly inside it
           const margin = GHOST_SIZE;
           ghostTargetX = ghostFavRoom.x + margin + Math.random() * (ghostFavRoom.w - margin * 2);
           ghostTargetY = ghostFavRoom.y + margin + Math.random() * (ghostFavRoom.h - margin * 2);
@@ -2974,23 +3054,21 @@
             _ghostPrevFavRoom = ghostFavRoom;
             ghostPath    = ghostPathTo(ghostFavRoom);
             ghostPathIdx = 0;
-            if (DEBUG_GHOST_BEHAVIOR && ghostPath.length > 0)
-              console.log(`[Ghost:${currentGhost.name}] PATH → ${ghostPath.map(r => r.label).join(' → ')}`);
+            if (DEBUG_GHOST_BEHAVIOR && ghostPath.length > 0) {
+              const labels = ghostPath.filter(wp => wp.room).map(wp => wp.room.label);
+              console.log(`[Ghost:${currentGhost.name}] PATH → ${labels.join(' → ')} (${ghostPath.length} waypoints)`);
+            }
             pickGhostTarget();
           }
 
-          // Normal roaming movement — base speed is multiplier × player speed
+          // Normal roaming movement — matches player speed (huntSpeedBase = 1.0 = equal to player)
           let GHOST_SPEED = beh.huntSpeedBase * player.speed;
 
-          // Universal proximity boost: all ghosts move 25% faster within 300px of player
-          const dToPlayer = Math.hypot(ghostX - (player.x + 8), ghostY - (player.y + 8));
-          if (dToPlayer < 300) GHOST_SPEED *= 1.25;
-
-          // Jinn: additional lights-on speed boost when close (stacks with proximity boost)
+          // Jinn: lights-on speed boost (applies in lit rooms regardless of range)
           if (currentGhost?.specialRules?.includes("speed_boost_lights_on") && housePowerOn) {
             const litRoom = _roomAtPoint(ghostX, ghostY);
             const litIdx  = litRoom ? rooms.indexOf(litRoom) : -1;
-            if (litIdx >= 0 && roomLights[litIdx]?.on && dToPlayer < 300) {
+            if (litIdx >= 0 && roomLights[litIdx]?.on) {
               GHOST_SPEED = Math.min(beh.huntSpeedLOS * player.speed, GHOST_SPEED * 1.8);
             }
           }
@@ -5685,16 +5763,19 @@
           const img = isWalking ? _ghostSpriteWalk[dir][_ghostSpriteFrame] : _ghostSpriteIdle[dir];
           if (img && img.complete && img.naturalWidth > 0) {
             const W = 48, H = Math.round(48 * (img.naturalHeight / img.naturalWidth));
+            const gx = Math.round(ghostX - W/2), gy = Math.round(ghostY - H/2);
             ctx.save();
             ctx.globalAlpha = alpha ?? 0.7;
-            ctx.drawImage(img, Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
-            ctx.globalCompositeOperation = "saturation";
-            ctx.fillStyle = "rgba(128,128,128,1)";
-            ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
-            ctx.globalCompositeOperation = "source-over";
-            ctx.globalAlpha = (alpha ?? 0.7) * 0.35;
-            ctx.fillStyle = tintColor;
-            ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
+            // Use CSS filter for desaturation + tint — applies per-pixel to the sprite only,
+            // so transparent areas stay transparent (no rectangle artifact on the background).
+            if (huntWarning) {
+              ctx.filter = "saturate(20%) sepia(1) hue-rotate(-10deg) saturate(500%) brightness(1.1)";
+            } else if (ghostHunting) {
+              ctx.filter = "saturate(20%) sepia(1) hue-rotate(-40deg) saturate(400%)";
+            } else {
+              ctx.filter = "saturate(20%) sepia(0.4) hue-rotate(180deg) brightness(0.9)";
+            }
+            ctx.drawImage(img, gx, gy, W, H);
             ctx.restore();
           }
         }
@@ -13243,7 +13324,28 @@
       else if (menuPhase === "profile")    { drawMenuProfile(); }
       else if (menuPhase === "title")      { drawMenuTitle(); }
       else if (menuPhase === "credits")    { drawMenuCredits(); }
-      else if (menuPhase === "corkboard") { drawMenuCorkboard(); if (journalOpen) drawJournal(); }
+      else if (menuPhase === "corkboard") {
+        drawMenuCorkboard();
+        if (journalOpen) drawJournal();
+        // Touch ripple — brief golden ring that expands and fades at the tap position
+        if (isMobile && _menuTouchFeedback) {
+          _menuTouchFeedback.timer -= _loopDt;
+          if (_menuTouchFeedback.timer > 0) {
+            const a = _menuTouchFeedback.timer / 0.25;
+            const r = 18 + (1 - a) * 22; // 18 → 40 px as it fades
+            ctx.save();
+            ctx.globalAlpha = a * 0.55;
+            ctx.strokeStyle = "#ffe080";
+            ctx.lineWidth   = 2.5;
+            ctx.beginPath();
+            ctx.arc(_menuTouchFeedback.x, _menuTouchFeedback.y, r, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+          } else {
+            _menuTouchFeedback = null;
+          }
+        }
+      }
       else if (lostRound)     drawLose();
       else if (roundOver)     drawResult();
       else if (gameRunning) {
