@@ -44,221 +44,9 @@
   <!-- Title screen replaced by canvas-drawn corkboard — see drawTitleScreen() -->
   <div id="titleScreen"></div>
 
-  <!-- Room test overlay — shown before game, dismissed by Continue button -->
-  <div id="roomTestOverlay" style="position:fixed;inset:0;background:#111;z-index:999;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:24px 16px;gap:16px;font-family:monospace;color:#ccc;">
-    <div style="font-size:14px;letter-spacing:2px;color:#888;">WALL STYLE TEST — WASD to move</div>
-    <canvas id="rtCanvas" width="480" height="400" style="image-rendering:pixelated;border:1px solid #333;width:864px;height:720px;"></canvas>
-
-    <!-- Per-room controls in a row -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;width:900px;">
-      <div style="background:#161616;border:1px solid #2a2a2a;padding:8px;display:flex;flex-direction:column;gap:5px;font-size:11px;">
-        <div style="color:#888;">ROOM 1 (top-left)</div>
-        <label>Wall H: <input type="range" class="rt-wallH" data-room="0" min="0" max="48" value="0" style="width:70px;"> <span class="rt-wallH-val">0</span>px</label>
-        <label>Tile: <select class="rt-tile" data-room="0" style="background:#222;color:#ccc;border:1px solid #333;font-family:monospace;font-size:11px;width:100%;">
-          <option value="wall">wall</option><option value="transition">transition</option><option value="wood">wood</option>
-        </select></label>
-        <label>Sx: <input type="range" class="rt-sx" data-room="0" min="0" max="96" step="32" value="0" style="width:70px;"> <span class="rt-sx-val">0</span></label>
-        <label>Sy: <input type="range" class="rt-sy" data-room="0" min="0" max="96" step="32" value="96" style="width:70px;"> <span class="rt-sy-val">96</span></label>
-      </div>
-      <div style="background:#161616;border:1px solid #2a2a2a;padding:8px;display:flex;flex-direction:column;gap:5px;font-size:11px;">
-        <div style="color:#888;">ROOM 2 (top-right)</div>
-        <label>Wall H: <input type="range" class="rt-wallH" data-room="1" min="0" max="48" value="16" style="width:70px;"> <span class="rt-wallH-val">16</span>px</label>
-        <label>Tile: <select class="rt-tile" data-room="1" style="background:#222;color:#ccc;border:1px solid #333;font-family:monospace;font-size:11px;width:100%;">
-          <option value="wall">wall</option><option value="transition" selected>transition</option><option value="wood">wood</option>
-        </select></label>
-        <label>Sx: <input type="range" class="rt-sx" data-room="1" min="0" max="96" step="32" value="96" style="width:70px;"> <span class="rt-sx-val">96</span></label>
-        <label>Sy: <input type="range" class="rt-sy" data-room="1" min="0" max="96" step="32" value="0" style="width:70px;"> <span class="rt-sy-val">0</span></label>
-      </div>
-      <div style="background:#161616;border:1px solid #2a2a2a;padding:8px;display:flex;flex-direction:column;gap:5px;font-size:11px;">
-        <div style="color:#888;">ROOM 3 (bottom-left)</div>
-        <label>Wall H: <input type="range" class="rt-wallH" data-room="2" min="0" max="48" value="24" style="width:70px;"> <span class="rt-wallH-val">24</span>px</label>
-        <label>Tile: <select class="rt-tile" data-room="2" style="background:#222;color:#ccc;border:1px solid #333;font-family:monospace;font-size:11px;width:100%;">
-          <option value="wall">wall</option><option value="transition" selected>transition</option><option value="wood">wood</option>
-        </select></label>
-        <label>Sx: <input type="range" class="rt-sx" data-room="2" min="0" max="96" step="32" value="96" style="width:70px;"> <span class="rt-sx-val">96</span></label>
-        <label>Sy: <input type="range" class="rt-sy" data-room="2" min="0" max="96" step="32" value="0" style="width:70px;"> <span class="rt-sy-val">0</span></label>
-      </div>
-      <div style="background:#161616;border:1px solid #2a2a2a;padding:8px;display:flex;flex-direction:column;gap:5px;font-size:11px;">
-        <div style="color:#888;">ROOM 4 (bottom-right)</div>
-        <label>Wall H: <input type="range" class="rt-wallH" data-room="3" min="0" max="48" value="32" style="width:70px;"> <span class="rt-wallH-val">32</span>px</label>
-        <label>Tile: <select class="rt-tile" data-room="3" style="background:#222;color:#ccc;border:1px solid #333;font-family:monospace;font-size:11px;width:100%;">
-          <option value="wall">wall</option><option value="transition" selected>transition</option><option value="wood">wood</option>
-        </select></label>
-        <label>Sx: <input type="range" class="rt-sx" data-room="3" min="0" max="96" step="32" value="0" style="width:70px;"> <span class="rt-sx-val">0</span></label>
-        <label>Sy: <input type="range" class="rt-sy" data-room="3" min="0" max="96" step="32" value="96" style="width:70px;"> <span class="rt-sy-val">96</span></label>
-      </div>
-    </div>
-
-    <button id="rtContinue" style="background:#1a2a1a;color:#8f8;border:1px solid #4a6;padding:10px 32px;font-family:monospace;font-size:13px;cursor:pointer;letter-spacing:2px;">CONTINUE TO GAME</button>
-  </div>
-
   <canvas id="gameCanvas"></canvas>
 
   <script>
-    // ── Room test overlay ──────────────────────────────────────────────
-    (function() {
-      const tc = document.getElementById("rtCanvas");
-      const tx = tc.getContext("2d");
-      tx.imageSmoothingEnabled = false;
-
-      const TILE = 32;
-      // Layout: 2×2 rooms with 20px wall gaps, 10px outer margin
-      // Room size: 200×170
-      const RW = 200, RH = 170, GAP = 20, MAR = 10;
-
-      // Room top-left corners
-      const RPOS = [
-        { x: MAR,           y: MAR },            // Room 0: top-left
-        { x: MAR+RW+GAP,    y: MAR },            // Room 1: top-right
-        { x: MAR,           y: MAR+RH+GAP },     // Room 2: bottom-left
-        { x: MAR+RW+GAP,    y: MAR+RH+GAP },     // Room 3: bottom-right
-      ];
-
-      // Door openings: { x, y, w, h } — walkable gaps in the wall
-      const DW = 38; // door width — matches real game doorways (38px)
-      const DOORS = [
-        // R0 ↔ R1: east wall of R0 / west wall of R1 (vertical door)
-        { x: MAR+RW, y: MAR+RH/2-DW/2, w: GAP, h: DW },
-        // R2 ↔ R3: east wall of R2 / west wall of R3
-        { x: MAR+RW, y: MAR+RH+GAP+RH/2-DW/2, w: GAP, h: DW },
-        // R0 ↔ R2: south wall of R0 / north wall of R2
-        { x: MAR+RW/2-DW/2, y: MAR+RH, w: DW, h: GAP },
-        // R1 ↔ R3: south wall of R1 / north wall of R3
-        { x: MAR+RW+GAP+RW/2-DW/2, y: MAR+RH, w: DW, h: GAP },
-      ];
-
-      // Walkable areas = rooms + door gaps (used for collision)
-      const WALKABLE = [
-        ...RPOS.map(r => ({ x: r.x, y: r.y, w: RW, h: RH })),
-        ...DOORS,
-      ];
-
-      const rtImgs = {
-        wall:       Object.assign(new Image(), { src: "sprites/tiles/wall.png" }),
-        transition: Object.assign(new Image(), { src: "sprites/tiles/wall_transition_wood.png" }),
-        wood:       Object.assign(new Image(), { src: "sprites/tiles/floor_wood.png" }),
-      };
-
-      const _rtOC = {};
-      function rtTileCanvas(img, sx, sy) {
-        const key = img.src + sx + sy;
-        if (!_rtOC[key]) {
-          const oc = document.createElement("canvas"); oc.width = TILE; oc.height = TILE;
-          const c2 = oc.getContext("2d"); c2.imageSmoothingEnabled = false;
-          c2.drawImage(img, sx, sy, TILE, TILE, 0, 0, TILE, TILE);
-          _rtOC[key] = oc;
-        }
-        return _rtOC[key];
-      }
-      function fillTiled(img, sx, sy, x, y, w, h, fb) {
-        if (!img.complete || !img.naturalWidth) { tx.fillStyle = fb||"#333"; tx.fillRect(x,y,w,h); return; }
-        const pat = tx.createPattern(rtTileCanvas(img, sx, sy), "repeat");
-        if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(x%TILE, y%TILE));
-        tx.save(); tx.fillStyle = pat; tx.fillRect(x,y,w,h); tx.restore();
-      }
-
-      function getRoomState(i) {
-        const els = (cls) => document.querySelectorAll(cls);
-        return {
-          wallH: +els(".rt-wallH")[i].value,
-          pick:   els(".rt-tile")[i].value,
-          sx:    +els(".rt-sx")[i].value,
-          sy:    +els(".rt-sy")[i].value,
-        };
-      }
-
-      // Player — same size and speed as main game (16×16, speed 1.9 at 60fps)
-      const PW = 16, PH = 16;
-      const rtPlayer = { x: RPOS[0].x + RW/2 - PW/2, y: RPOS[0].y + RH/2 - PH/2 };
-      const SPD = 1.9 * 60; // 1.9 px/frame × 60fps = 114 px/sec
-      const rtKeys = {};
-      let rtWalkCycle = 0, rtWalkAngle = Math.PI/2, rtIsMoving = false;
-
-      function overlaps(ax, ay, aw, ah, bx, by, bw, bh) {
-        return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
-      }
-      function inWalkable(x, y) {
-        return WALKABLE.some(r => overlaps(x, y, PW, PH, r.x, r.y, r.w, r.h));
-      }
-
-      let rtLast = 0;
-      function rtLoop(ts) {
-        if (document.getElementById("roomTestOverlay").style.display === "none") return;
-        const dt = Math.min((ts - rtLast) / 1000, 0.05);
-        rtLast = ts;
-
-        let dx = 0, dy = 0;
-        if (rtKeys["ArrowLeft"]  || rtKeys["a"] || rtKeys["A"]) dx -= 1;
-        if (rtKeys["ArrowRight"] || rtKeys["d"] || rtKeys["D"]) dx += 1;
-        if (rtKeys["ArrowUp"]    || rtKeys["w"] || rtKeys["W"]) dy -= 1;
-        if (rtKeys["ArrowDown"]  || rtKeys["s"] || rtKeys["S"]) dy += 1;
-        if (dx && dy) { dx *= 0.707; dy *= 0.707; }
-
-        rtIsMoving = !!(dx || dy);
-        if (rtIsMoving) { rtWalkAngle = Math.atan2(dy, dx); rtWalkCycle += dt * 8; }
-
-        const nx = rtPlayer.x + dx * SPD * dt;
-        const ny = rtPlayer.y + dy * SPD * dt;
-        if (inWalkable(nx, rtPlayer.y)) rtPlayer.x = nx;
-        if (inWalkable(rtPlayer.x, ny)) rtPlayer.y = ny;
-
-        // Draw
-        tx.fillStyle = "#0d0d0d"; tx.fillRect(0, 0, tc.width, tc.height);
-
-        // Wall texture fills whole map area (gaps between rooms = walls)
-        fillTiled(rtImgs.wall, 0, 96, MAR, MAR, RW*2+GAP, RH*2+GAP, "#2a1f14");
-
-        // Each room: floor + north wall strip
-        RPOS.forEach((r, i) => {
-          const { wallH, pick, sx, sy } = getRoomState(i);
-          fillTiled(rtImgs.wood, 0, 96, r.x, r.y, RW, RH, "#3a2a1a");
-          if (wallH > 0) fillTiled(rtImgs[pick], sx, sy, r.x, r.y, RW, wallH, "#2a1f14");
-        });
-
-        // Door gaps — draw floor through them
-        DOORS.forEach(d => {
-          fillTiled(rtImgs.wood, 0, 96, d.x, d.y, d.w, d.h, "#3a2a1a");
-        });
-
-        // Player — drawn same as main game via _drawPlayerSprite
-        // pcx/pcy is center of player rect (same convention as main game)
-        const pcx = Math.round(rtPlayer.x + PW/2);
-        const pcy = Math.round(rtPlayer.y + PH/2);
-        // Ground shadow
-        tx.fillStyle = "rgba(0,0,0,0.22)";
-        tx.beginPath(); tx.ellipse(pcx, pcy+8, 9, 3.5, 0, 0, Math.PI*2); tx.fill();
-        // Temporarily override globals _drawPlayerSprite relies on, then restore
-        const _saveMoving = isMoving, _saveAngle = walkAngle, _saveWalkAngle = playerAngle,
-              _saveWalkCycle = walkCycle;
-        // eslint-disable-next-line no-global-assign
-        isMoving = rtIsMoving; walkAngle = rtWalkAngle; playerAngle = rtWalkAngle;
-        walkCycle = rtWalkCycle;
-        _drawPlayerSprite(tx, pcx, pcy);
-        isMoving = _saveMoving; walkAngle = _saveAngle; playerAngle = _saveWalkAngle;
-        walkCycle = _saveWalkCycle;
-
-        requestAnimationFrame(rtLoop);
-      }
-
-      document.addEventListener("keydown", e => { rtKeys[e.key] = true; });
-      document.addEventListener("keyup",   e => { rtKeys[e.key] = false; });
-
-      document.querySelectorAll(".rt-wallH,.rt-sx,.rt-sy").forEach(el => {
-        el.addEventListener("input", () => {
-          const span = el.parentElement.querySelector("span");
-          if (span) span.textContent = el.value;
-        });
-      });
-
-      Object.values(rtImgs).forEach(img => { img.onload = () => {}; });
-
-      document.getElementById("rtContinue").addEventListener("click", () => {
-        document.getElementById("roomTestOverlay").style.display = "none";
-      });
-
-      requestAnimationFrame(rtLoop);
-    })();
-    // ──────────────────────────────────────────────────────────────────
 
     const canvas = document.getElementById("gameCanvas");
     canvas.style.imageRendering = "pixelated";
@@ -390,15 +178,8 @@
 
     // --- Debug ---
     const DEBUG_COLLISION = false; // set true to show collision overlay
-    const DEBUG_GHOST     = false; // set true to use Ultimate Ghost (testing only — disable for normal play)
+    const DEBUG_GHOST     = false; // set true to enable ghost console logging
 
-    // --- Ghost roster config ---
-    const GHOST_CONFIG = {
-      forceUltimateGhost:            true,   // overrides everything; uses Ultimate Ghost
-      enableNormalGhostRoster:       true,   // flip to true to go live with 27-ghost roster
-      normalGhostSelectionMode:      "random", // "random" | "weighted"
-      removeUltimateGhostFromLiveRounds: true,
-    };
 
     // --- Shared behavior defaults (per-ghost overrides win) ---
     const GHOST_BEHAVIOR_DEFAULTS = {
@@ -420,7 +201,7 @@
 
     // --- Screen state ---
     // menuPhase: "intro" = opening sequence | "title" = haunted identity screen | "corkboard" = setup menu | null = in-game
-    let menuPhase      = null; // DEV: skip intro — change back to "intro" for full experience
+    let menuPhase      = "corkboard"; // skip intro/title — go straight to lobby
 
     // Intro sequence state
     let _introPhase    = 0;      // 0="Haunted" fade-in, 1=hold, 2=fade-out, 3="Ryan's" fade-in, 4=hold, 5=fade-out, 6=done
@@ -522,7 +303,12 @@
     let voodooSpent      = false;   // all 5 pins used
     let ghostAppearTimer = 0;       // > 0: show ghost in gray translucent form in world
     let ghostHuntFlash   = 0;       // > 0: red hunt-flash screen overlay fading from 1.5→0
-    let playerSanity     = 100;     // 0–100; head pin reduces by 25
+    let ghostHunting     = false;   // true while ghost is actively chasing player
+    let huntDuration     = 0;       // seconds remaining in current hunt
+    let huntCooldown     = 0;       // seconds until ghost can hunt again
+    let huntBlinkT       = 0;       // flicker timer for ghost visibility during hunt
+    let incensePacified  = 0;       // > 0: ghost won't hunt (seconds remaining)
+    let playerSanity     = 100;     // 0–100; voodoo/tarot reduce; drains slowly during hunt
     let playerMoney      = 0;        // earned from completed investigations; spent in shop
     let playerLevel      = 1;        // player level (future XP progression)
     let playerXP         = 40;       // current XP within current level
@@ -631,95 +417,96 @@
     let _ghostSpriteFrame = 0, _ghostSpriteTimer = 0;
 
 
-    // ── Tileset sprites (128×128 Wang sheets at 32px; solid tile at sx=0,sy=96) ──
-    const _tileSize = 32;
-    const _tileSolidSX = 0, _tileSolidSY = 96; // all-upper corner tile in 4×4 grid of 32px tiles
 
-    function _makeTilePattern(src) {
-      const obj = { img: new Image(), pat: null };
-      obj.img.src = src;
-      obj.img.onload = () => { obj.pat = null; }; // bust cache on load
-      return obj;
-    }
-    const _tileWood     = _makeTilePattern("sprites/tiles/floor_wood.png");
-    const _tileBath     = _makeTilePattern("sprites/tiles/floor_bath.png");
-    const _tileConcrete = _makeTilePattern("sprites/tiles/floor_concrete.png");
-    const _tileGrass    = _makeTilePattern("sprites/tiles/floor_grass.png");
-    const _tileWall     = _makeTilePattern("sprites/tiles/wall.png");
-    const _tileVan      = _makeTilePattern("sprites/tiles/floor_van.png");
-    // Wall-to-floor transition sheet — straight north-edge tile at sx:96,sy:0
-    const _tileWallTransition = _makeTilePattern("sprites/tiles/wall_transition_wood.png");
-    const _tileWallTransitionSX = 96, _tileWallTransitionSY = 0;
+    // Draw a hand-coded floor texture for a room, matching the established art style.
+    // Dark muted base, texture via thin fillRect rows/columns, depth via edge shadows.
+    function _drawRoomFloor(c, r) {
+      const x = r.x, y = r.y, w = r.w, h = r.h, label = r.label || "";
 
-    // Extract the solid tile and return a CanvasPattern.
-    // Pattern is NOT cached on tileObj — caller supplies the live ctx so the
-    // pattern is always valid for the current canvas transform.
-    function _getTilePattern(tileObj, drawCtx) {
-      if (!tileObj.img.complete || !tileObj.img.naturalWidth) return null;
-      if (!tileObj._oc) {
-        // Build the offscreen tile canvas once (reused across frames)
-        const oc = document.createElement("canvas");
-        oc.width = _tileSize; oc.height = _tileSize;
-        const oc2d = oc.getContext("2d");
-        oc2d.imageSmoothingEnabled = false;
-        oc2d.drawImage(tileObj.img, _tileSolidSX, _tileSolidSY, _tileSize, _tileSize, 0, 0, _tileSize, _tileSize);
-        tileObj._oc = oc;
-      }
-      return drawCtx.createPattern(tileObj._oc, "repeat");
-    }
+      if (label.includes("Bed") || label.includes("Walk-in")) {
+        // ── CARPET — dark charcoal, subtle pile rows ──────────────────────────
+        c.fillStyle = "#1a1818"; c.fillRect(x, y, w, h);
+        // Pile texture: alternating faint rows
+        c.fillStyle = "rgba(255,255,255,0.03)";
+        for (let cy = y; cy < y + h; cy += 3) c.fillRect(x, cy, w, 1);
+        c.fillStyle = "rgba(0,0,0,0.10)";
+        for (let cy = y + 1; cy < y + h; cy += 3) c.fillRect(x, cy, w, 1);
+        // Edge shadow (depth)
+        c.fillStyle = "rgba(0,0,0,0.30)";
+        c.fillRect(x, y, w, 3); c.fillRect(x, y, 3, h);
+        c.fillRect(x, y+h-3, w, 3); c.fillRect(x+w-3, y, 3, h);
 
-    // Fill a rect with a specific tile (sx,sy) from a sheet, tiled and world-anchored.
-    function _fillTiledFrom(drawCtx, tileObj, sx, sy, flatColor, x, y, w, h) {
-      if (!tileObj.img.complete || !tileObj.img.naturalWidth) {
-        drawCtx.fillStyle = flatColor; drawCtx.fillRect(x, y, w, h); return;
-      }
-      const cacheKey = `_oc_${sx}_${sy}`;
-      if (!tileObj[cacheKey]) {
-        const oc = document.createElement("canvas");
-        oc.width = _tileSize; oc.height = _tileSize;
-        const oc2d = oc.getContext("2d");
-        oc2d.imageSmoothingEnabled = false;
-        oc2d.drawImage(tileObj.img, sx, sy, _tileSize, _tileSize, 0, 0, _tileSize, _tileSize);
-        tileObj[cacheKey] = oc;
-      }
-      const pat = drawCtx.createPattern(tileObj[cacheKey], "repeat");
-      if (pat.setTransform) pat.setTransform(new DOMMatrix().translateSelf(x % _tileSize, y % _tileSize));
-      drawCtx.save();
-      drawCtx.fillStyle = pat;
-      drawCtx.fillRect(x, y, w, h);
-      drawCtx.restore();
-    }
-
-    // Fill a rect with a tiled pattern anchored to world coords.
-    // Uses pattern.setTransform so tiles are always aligned to the world grid,
-    // not the screen — prevents tiles swimming as the camera pans.
-    function _fillTiled(drawCtx, tileObj, flatColor, x, y, w, h) {
-      const pat = _getTilePattern(tileObj, drawCtx);
-      if (pat) {
-        // Anchor pattern to world position so it doesn't swim when camera moves
-        if (pat.setTransform) {
-          const m = new DOMMatrix();
-          m.translateSelf(x % _tileSize, y % _tileSize);
-          pat.setTransform(m);
+      } else if (label.includes("Bath")) {
+        // ── BATHROOM TILE — cool dark slate, square grid ──────────────────────
+        const TS = 12; // tile size in world px
+        c.fillStyle = "#181e20"; c.fillRect(x, y, w, h);
+        // Tile faces (every other tile slightly lighter)
+        for (let ty = y; ty < y + h; ty += TS) {
+          for (let tx = x; tx < x + w; tx += TS) {
+            const alt = ((Math.floor((tx-x)/TS) + Math.floor((ty-y)/TS)) % 2 === 0);
+            c.fillStyle = alt ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.08)";
+            c.fillRect(tx+1, ty+1, TS-2, TS-2);
+          }
         }
-        drawCtx.save();
-        drawCtx.fillStyle = pat;
-        drawCtx.fillRect(x, y, w, h);
-        drawCtx.restore();
-      } else {
-        drawCtx.fillStyle = flatColor;
-        drawCtx.fillRect(x, y, w, h);
-      }
-    }
+        // Grout lines
+        c.fillStyle = "rgba(0,0,0,0.35)";
+        for (let ty = y; ty < y + h; ty += TS) c.fillRect(x, ty, w, 1);
+        for (let tx = x; tx < x + w; tx += TS) c.fillRect(tx, y, 1, h);
+        // Highlight on grout top edge
+        c.fillStyle = "rgba(255,255,255,0.05)";
+        for (let ty = y + 1; ty < y + h; ty += TS) c.fillRect(x, ty, w, 1);
+        // Edge shadow
+        c.fillStyle = "rgba(0,0,0,0.30)";
+        c.fillRect(x, y, w, 3); c.fillRect(x, y, 3, h);
 
-    // Pick the right floor tileset for a room label
-    function _roomTile(label) {
-      if (!label) return _tileWood;
-      if (label.includes("Bath"))    return _tileBath;
-      if (label.includes("Garage"))  return _tileConcrete;
-      if (label.includes("Utility")) return _tileConcrete;
-      if (label.includes("Yard"))    return _tileGrass;
-      return _tileWood;
+      } else if (label.includes("Kitchen") || label.includes("Dining") || label.includes("Utility")) {
+        // ── KITCHEN TILE — dark slate ceramic, larger square grid ─────────────
+        const TS = 16;
+        c.fillStyle = "#1a1e1a"; c.fillRect(x, y, w, h);
+        for (let ty = y; ty < y + h; ty += TS) {
+          for (let tx = x; tx < x + w; tx += TS) {
+            c.fillStyle = "rgba(255,255,255,0.03)";
+            c.fillRect(tx+1, ty+1, TS-2, TS-2);
+          }
+        }
+        // Grout
+        c.fillStyle = "rgba(0,0,0,0.30)";
+        for (let ty = y; ty < y + h; ty += TS) c.fillRect(x, ty, w, 1);
+        for (let tx = x; tx < x + w; tx += TS) c.fillRect(tx, y, 1, h);
+        c.fillStyle = "rgba(255,255,255,0.04)";
+        for (let ty = y + 1; ty < y + h; ty += TS) c.fillRect(x, ty, w, 1);
+        // Edge shadow
+        c.fillStyle = "rgba(0,0,0,0.25)";
+        c.fillRect(x, y, w, 3); c.fillRect(x, y, 3, h);
+
+      } else if (label.includes("Garage")) {
+        // ── CONCRETE — dark gray, horizontal crack lines ───────────────────────
+        c.fillStyle = "#1a1916"; c.fillRect(x, y, w, h);
+        c.fillStyle = "rgba(0,0,0,0.14)";
+        for (let cy = y + 28; cy < y + h; cy += 36) c.fillRect(x, cy, w, 1);
+        for (let cx = x + 36; cx < x + w; cx += 48) c.fillRect(cx, y, 1, h);
+        // Surface variation
+        c.fillStyle = "rgba(255,255,255,0.02)";
+        for (let cy = y; cy < y + h; cy += 4) c.fillRect(x, cy, w, 1);
+        // Edge shadow
+        c.fillStyle = "rgba(0,0,0,0.30)";
+        c.fillRect(x, y, w, 4); c.fillRect(x, y, 4, h);
+
+      } else {
+        // ── WOOD — warm dark planks (living room, hallway, foyer, study, storage)
+        c.fillStyle = "#221a0e"; c.fillRect(x, y, w, h);
+        // Plank rows — subtle horizontal banding
+        c.fillStyle = "rgba(0,0,0,0.14)";
+        for (let py = y; py < y + h; py += 8) c.fillRect(x, py, w, 1);
+        c.fillStyle = "rgba(255,255,255,0.04)";
+        for (let py = y + 1; py < y + h; py += 8) c.fillRect(x, py, w, 1);
+        // Plank end seams (vertical, staggered every ~48px)
+        c.fillStyle = "rgba(0,0,0,0.10)";
+        for (let px = x + 24; px < x + w; px += 48) c.fillRect(px, y, 1, h);
+        // Edge shadow
+        c.fillStyle = "rgba(0,0,0,0.28)";
+        c.fillRect(x, y, w, 3); c.fillRect(x, y, 3, h);
+      }
     }
 
     // Breaker box — garage west wall
@@ -884,26 +671,16 @@
     const itemColors     = Object.fromEntries(ITEMS.map(it => [it.name, it.color]));
     const directionalTools = new Set(ITEMS.filter(it => it.directional).map(it => it.name));
 
-    // --- Environment / weather mode ---
-    const envModes = ["night", "nightrain", "sunrise", "sunset", "bloodmoon", "bloodmoonrain"];
+    // --- Environment mode ---
+    const envModes = ["night", "sunrise", "sunset", "bloodmoon"];
     let envModeIdx = 0;
-    // Each mode: bg sky, outside dark overlay alpha, fog fill color, ambient sky glow, tint, rain
+    // Each mode: bg sky, outside dark overlay alpha, fog fill color, tint
     const ENV = {
-      // screen lighting handled directly in draw() per mode
-      night:         { bg:"#020205", outsideAlpha:0.65, fogColor:"rgba(2,2,10,0.97)",  tint:null,                    rain:false },
-      nightrain:     { bg:"#030510", outsideAlpha:0.70, fogColor:"rgba(3,6,16,0.97)",  tint:"rgba(25,45,100,0.32)",  rain:true  },
-      sunrise:       { bg:"#1a0a02", outsideAlpha:0.00, fogColor:"rgba(22,8,2,0.84)",  tint:null,                    rain:false },
-      sunset:        { bg:"#160400", outsideAlpha:0.05, fogColor:"rgba(18,4,0,0.86)",  tint:null,                    rain:false },
-      bloodmoon:     { bg:"#060002", outsideAlpha:0.50, fogColor:"rgba(16,0,4,0.97)",  tint:"rgba(160,0,16,0.55)",   rain:false },
-      bloodmoonrain: { bg:"#040001", outsideAlpha:0.55, fogColor:"rgba(12,0,3,0.97)",  tint:"rgba(140,0,12,0.50)",   rain:true  },
+      night:     { bg:"#020205", outsideAlpha:0.00, fogColor:"rgba(2,2,10,0.97)",  tint:null                  },
+      sunrise:   { bg:"#1a0a02", outsideAlpha:0.00, fogColor:"rgba(22,8,2,0.84)",  tint:null                  },
+      sunset:    { bg:"#160400", outsideAlpha:0.05, fogColor:"rgba(18,4,0,0.86)",  tint:null                  },
+      bloodmoon: { bg:"#060002", outsideAlpha:0.50, fogColor:"rgba(16,0,4,0.97)",  tint:"rgba(160,0,16,0.55)" },
     };
-    // Rain particles (reused across modes)
-    const rainDrops = Array.from({length:120}, () => ({
-      x: Math.random() * 900,
-      y: Math.random() * 750,
-      len: 6 + Math.random() * 8,
-      speed: 4 + Math.random() * 3,
-    }));
 
     // --- Safe time ---
     const SAFE_TIME = 20; // seconds of safety at round start
@@ -941,6 +718,7 @@
       voodooPinUsed = [false,false,false,false,false]; voodooDollOpen = false;
       voodooAnimPinId = -1; voodooAnimT = 0; voodooEffectFired = false; voodooPostT = 0;
       voodooSpent = false; ghostAppearTimer = 0; ghostHuntFlash = 0; playerSanity = 100;
+      ghostHunting = false; huntDuration = 0; huntCooldown = 0; huntBlinkT = 0; incensePacified = 0;
       musicBoxActive = false; musicBoxTimer = 0; musicBoxBroken = false; musicBoxPulseT = 0;
       // Build shuffled tarot deck
       tarotOpen = false; tarotDrawnCard = null; tarotRevealT = 0; tarotBurnT = 0;
@@ -1167,7 +945,7 @@
       if (hitDoor) {
         const playerInDoor = player.x + player.width  > hitDoor.x && player.x < hitDoor.x + hitDoor.w &&
                              player.y + player.height > hitDoor.y && player.y < hitDoor.y + hitDoor.h;
-        if (!(hitDoor.open && playerInDoor)) hitDoor.open = !hitDoor.open;
+        if (!hitDoor.fixed && !(hitDoor.open && playerInDoor)) hitDoor.open = !hitDoor.open;
         return;
       }
 
@@ -1521,7 +1299,7 @@
       // Closets/storage
       { x:500, y:600, w: 60, h: 80, color:"#1a1814", label:"Coat Closet" }, // dark warm
       // Outside — split so the van body acts as a solid obstacle
-      { x: 60, y:720, w:700, h:262, color:"#162014", label:"Yard"        }, // natural dark green
+      { x: 60, y:720, w:700, h:320, color:"#162014", label:"Yard"        }, // natural dark green
     ];
 
     // Doorways: open-gap connectors between adjacent rooms.
@@ -1551,7 +1329,8 @@
       // Study
       { x:141, y:581, w:38, h:38 }, // Bedroom 2   ↔ Study        (y:600)
       // Outside connections
-      { x:381, y:701, w:38, h:38 }, // Foyer ↔ Yard (y:720, front door)
+      { x:381, y:701, w:38, h:58 }, // Foyer ↔ Yard (front door)
+      { x:600, y:716, w:160, h:42 }, // Garage ↔ Yard via driveway
     ];
 
     // Combined walkable list (rooms + doorways), used for collision.
@@ -1595,12 +1374,11 @@
       { x:637, y:396, w:26, h:8,  open:false, label:"Utility Room"       }, // wall y:400
       { x:637, y:496, w:26, h:8,  open:false, label:"Garage"             }, // wall y:500
       { x:147, y:596, w:26, h:8,  open:false, label:"Master Bath"        }, // wall y:600
-      { x:387, y:716, w:26, h:8,  open:false, label:"Front Door"         }, // wall y:720
     ];
 
     function nearDoor() {
       const cx = player.x + 8, cy = player.y + 8;
-      return doors.find(d => Math.hypot(cx - (d.x + d.w/2), cy - (d.y + d.h/2)) < 40);
+      return doors.find(d => !d.fixed && Math.hypot(cx - (d.x + d.w/2), cy - (d.y + d.h/2)) < 40);
     }
 
     // Van walls — three solid sides; east/back controlled by vanDoor
@@ -1667,6 +1445,13 @@
 
     // --- Flashlight & room lights ---
     let playerAngle   = Math.PI / 2; // facing south by default (player starts in van, exits east)
+
+    // ── DOOR TRANSITION ─────────────────────────────────────────────────────
+    // When player crosses y:720 (house threshold), play a quick fade-to-black
+    // and back. _transAlpha goes 0→1→0. _transWasOutside tracks previous state.
+    let _transAlpha      = 0;
+    let _transDir        = 0;     // 0=idle, 1=fading out, -1=fading in
+    let _transLockedSide = true;  // playerOutside value locked during transition
     let mouseX = canvas.width / 2, mouseY = canvas.height / 2; // screen coords
     let flashlightOn  = true;
     let walkCycle    = 0;        // 0..2π walk phase, increments while moving
@@ -2106,25 +1891,6 @@
     const ghosts = GHOST_REGISTRY;
     let currentGhost = null; // { name, clue, clue2, evidence[], notes }
 
-    // --- Ultimate Ghost (debug only) ---
-    // Has every evidence type so every tool can trigger.
-    // Always spawns in the Foyer and never leaves. Visible on screen.
-    // To disable: set DEBUG_GHOST = false at the top.
-    const ultimateGhost = {
-      name: "Ultimate Ghost",
-      clue:  "Reacts to everything.",
-      clue2: "All evidence types active.",
-      evidence: [
-        "EMF Level 5",
-        "D.O.T.S. Projector",
-        "Spirit Box",
-        "Ultraviolet",
-        "Freezing Temperatures",
-        "Ghost Orb",
-        "Ghost Writing",
-      ],
-      notes: "DEBUG GHOST — triggers all evidence, spawns in Foyer, never roams. Set DEBUG_GHOST=false to remove.",
-    };
 
     // --- Ghost system helpers ---
 
@@ -2165,23 +1931,9 @@
       return Object.assign({}, GHOST_BEHAVIOR_DEFAULTS, ghost.behavior || {});
     }
 
-    // Select the ghost for this round — respects GHOST_CONFIG flags
+    // Select the ghost for this round — picks from the live 27-ghost registry
     function selectGhostForRound() {
-      // forceUltimateGhost wins over everything
-      if (GHOST_CONFIG.forceUltimateGhost) {
-        ghostLog("Config: forceUltimateGhost=true — using Ultimate Ghost");
-        return ultimateGhost;
-      }
-      // Normal roster disabled — fall back to Ultimate Ghost (safe default)
-      if (!GHOST_CONFIG.enableNormalGhostRoster) {
-        ghostLog("Config: enableNormalGhostRoster=false — defaulting to Ultimate Ghost");
-        return ultimateGhost;
-      }
-      // Normal roster is live — pick from registry
-      const pool = GHOST_CONFIG.removeUltimateGhostFromLiveRounds
-        ? GHOST_REGISTRY
-        : [...GHOST_REGISTRY, ultimateGhost];
-      const chosen = pool[Math.floor(Math.random() * pool.length)];
+      const chosen = GHOST_REGISTRY[Math.floor(Math.random() * GHOST_REGISTRY.length)];
       ghostLog("Round ghost selected:", chosen.name, "| evidence:", chosen.evidence.join(", "));
       return chosen;
     }
@@ -2190,11 +1942,7 @@
       currentGhost = selectGhostForRound();
       ghostLog("pickGhost() assigned:", currentGhost.name);
 
-      // TEST OVERRIDE — ultimate ghost always uses the Foyer for easy testing access
-      if (GHOST_CONFIG.forceUltimateGhost) {
-        ghostFavRoom = rooms.find(r => r.label === "Foyer") || rooms[0];
-        ghostLog("Test override: ghostFavRoom forced to", ghostFavRoom.label);
-      } else {
+      {
         const interior = rooms.filter(r => r.w >= 80 && r.h >= 80 && r.w < 400 && r.h < 400);
         ghostFavRoom = interior[Math.floor(Math.random() * interior.length)] || rooms[0];
       }
@@ -2791,14 +2539,10 @@
         if (musicBoxTimer >= MUSIC_BOX_HUNT_DELAY) {
           // Trigger hunt and shatter the box
           _breakMusicBox();
+          ghostHunting    = true;
+          huntDuration    = 30;
           ghostHuntFlash  = 1.5;
-          ghostAppearTimer = 3.0;
-          // Move ghost toward player room for the hunt
-          const pRoom = _roomAtPoint(player.x + 8, player.y + 8);
-          if (pRoom && currentGhost) {
-            ghostX = pRoom.x + pRoom.w * 0.5 + (Math.random() - 0.5) * pRoom.w * 0.4;
-            ghostY = pRoom.y + pRoom.h * 0.5 + (Math.random() - 0.5) * pRoom.h * 0.4;
-          }
+          ghostAppearTimer = huntDuration + 2;
           emfSources.push({ x: ghostX, y: ghostY, level: 5, timer: 16 });
         }
       }
@@ -2858,7 +2602,6 @@
         // Ghost movement — smooth waypoint walking with collision + optional room confinement
         // Ghost behavior pulled from current ghost type + defaults
         const beh = getGhostBehavior(currentGhost);
-        const GHOST_SPEED = beh.huntSpeedBase; // default 1.4; ghosts with overrides differ
         // Goryo (no_room_migration) stays in its favorite room; others roam freely
         const ghostConfine = currentGhost?.specialRules?.includes("no_room_migration") ? ghostFavRoom : null;
 
@@ -2874,33 +2617,114 @@
           }
         }
 
-        if (ghostPauseTimer > 0) {
-          ghostPauseTimer -= delta; // standing still at waypoint
-        } else {
-          const dx = ghostTargetX - ghostX;
-          const dy = ghostTargetY - ghostY;
-          const dist = Math.hypot(dx, dy);
-          if (dist < 3) {
-            // Reached waypoint — pause then pick next target
-            ghostPauseTimer = 0.6 + Math.random() * 1.6;
-            pickGhostTarget();
+        // ── Hunt system ─────────────────────────────────────────────────────────
+        // Sanity drains slowly once safe time is over
+        if (safeTimeOver && !ghostHunting) {
+          playerSanity = Math.max(0, playerSanity - delta * 1.2); // ~1.2%/s drain while exploring
+        }
+        if (incensePacified > 0) incensePacified -= delta;
+        if (huntCooldown    > 0) huntCooldown    -= delta;
+        huntBlinkT += delta;
+
+        const pcx = player.x + 8, pcy = player.y + 8;
+        const distToPlayer = Math.hypot(ghostX - pcx, ghostY - pcy);
+
+        if (ghostHunting) {
+          // Check if incense stops the hunt
+          const incenseInRange = worldItems.some(it =>
+            it.name === "Incense" && it.active &&
+            Math.hypot(it.x + 6 - ghostX, it.y + 6 - ghostY) < 120
+          ) || (inventory[selectedSlot] === "Incense" && heldItemOn && distToPlayer < 120);
+          if (incenseInRange && incensePacified <= 0) {
+            incensePacified = 90; // pacified for 90s
+            ghostHunting = false;
+            huntCooldown = 30;
+            ghostHuntFlash = 0;
+          }
+
+          // Check if placed crucifix blocks the hunt
+          const crucifixRangePx = beh.crucifixRange * 48; // 3 "metres" in game px
+          const crucifixNearby = worldItems.some(it =>
+            it.name === "Crucifix" &&
+            Math.hypot(it.x + 6 - ghostX, it.y + 6 - ghostY) < crucifixRangePx
+          );
+          if (crucifixNearby) {
+            ghostHunting = false;
+            huntCooldown = 25;
+            ghostHuntFlash = 0;
+          }
+
+          huntDuration -= delta;
+          if (huntDuration <= 0) {
+            // Hunt expires — ghost returns to roaming
+            ghostHunting = false;
+            huntCooldown = 20 + Math.random() * 15;
+            ghostHuntFlash = 0;
           } else {
-            // Step toward target with wall-sliding (same pattern as player movement)
-            const step = Math.min(GHOST_SPEED, dist);
-            const nx = ghostX + (dx / dist) * step;
-            const ny = ghostY + (dy / dist) * step;
-            ghostMoveAngle = Math.atan2(dy, dx); // face direction of travel
-            if      (canGhostMoveTo(nx,     ny,     ghostConfine)) { ghostX = nx; ghostY = ny; }
-            else if (canGhostMoveTo(nx,     ghostY, ghostConfine)) { ghostX = nx; }
-            else if (canGhostMoveTo(ghostX, ny,     ghostConfine)) { ghostY = ny; }
-            else {
-              // Fully blocked — give up on this target and pick a new one
-              ghostPauseTimer = 0.3;
-              pickGhostTarget();
+            // Chase player — move at hunt speed toward player
+            const hSpeed = beh.huntSpeedLOS;
+            const hdx = pcx - ghostX, hdy = pcy - ghostY;
+            const hd  = Math.hypot(hdx, hdy);
+            if (hd > 2) {
+              const step = Math.min(hSpeed, hd);
+              const nx = ghostX + (hdx / hd) * step;
+              const ny = ghostY + (hdy / hd) * step;
+              ghostMoveAngle = Math.atan2(hdy, hdx);
+              if      (canGhostMoveTo(nx,     ny,     null)) { ghostX = nx; ghostY = ny; }
+              else if (canGhostMoveTo(nx,     ghostY, null)) { ghostX = nx; }
+              else if (canGhostMoveTo(ghostX, ny,     null)) { ghostY = ny; }
+              ghostWalkCycle += 0.18;
+              _ghostSpriteTimer++;
+              if (_ghostSpriteTimer >= SPRITE_FRAME_SPEED) { _ghostSpriteTimer = 0; _ghostSpriteFrame = (_ghostSpriteFrame + 1) % 6; }
             }
-            ghostWalkCycle += 0.12;
-            _ghostSpriteTimer++;
-            if (_ghostSpriteTimer >= SPRITE_FRAME_SPEED) { _ghostSpriteTimer = 0; _ghostSpriteFrame = (_ghostSpriteFrame + 1) % 6; }
+            // Drain sanity faster during hunt
+            playerSanity = Math.max(0, playerSanity - delta * 6);
+
+            // Catch player — within 18px = caught
+            if (Math.hypot(ghostX - pcx, ghostY - pcy) < 18) {
+              ghostHunting = false;
+              gameRunning  = false;
+              lostRound    = true;
+            }
+          }
+        } else {
+          // Not hunting — check whether to start a hunt
+          const canHunt = safeTimeOver && huntCooldown <= 0 && incensePacified <= 0
+                          && playerSanity <= beh.huntThreshold && !roundOver;
+          if (canHunt) {
+            // Roll once per second (approx): ~30% base chance when sanity below threshold
+            if (Math.random() < delta * 0.3) {
+              ghostHunting    = true;
+              huntDuration    = 25 + Math.random() * 10; // 25–35s hunt
+              ghostHuntFlash  = 1.5;
+              ghostAppearTimer = huntDuration + 2; // ghost visible during hunt
+            }
+          }
+
+          // Normal roaming movement
+          const GHOST_SPEED = beh.huntSpeedBase;
+          if (ghostPauseTimer > 0) {
+            ghostPauseTimer -= delta;
+          } else {
+            const dx = ghostTargetX - ghostX;
+            const dy = ghostTargetY - ghostY;
+            const dist = Math.hypot(dx, dy);
+            if (dist < 3) {
+              ghostPauseTimer = 0.6 + Math.random() * 1.6;
+              pickGhostTarget();
+            } else {
+              const step = Math.min(GHOST_SPEED, dist);
+              const nx = ghostX + (dx / dist) * step;
+              const ny = ghostY + (dy / dist) * step;
+              ghostMoveAngle = Math.atan2(dy, dx);
+              if      (canGhostMoveTo(nx,     ny,     ghostConfine)) { ghostX = nx; ghostY = ny; }
+              else if (canGhostMoveTo(nx,     ghostY, ghostConfine)) { ghostX = nx; }
+              else if (canGhostMoveTo(ghostX, ny,     ghostConfine)) { ghostY = ny; }
+              else { ghostPauseTimer = 0.3; pickGhostTarget(); }
+              ghostWalkCycle += 0.12;
+              _ghostSpriteTimer++;
+              if (_ghostSpriteTimer >= SPRITE_FRAME_SPEED) { _ghostSpriteTimer = 0; _ghostSpriteFrame = (_ghostSpriteFrame + 1) % 6; }
+            }
           }
         }
 
@@ -2948,7 +2772,7 @@
 
           // Execute immediate world effects for some actions
           if (ghostAction === "touchDoor" && nearDoor) {
-            nearDoor.open = !nearDoor.open; // ghost opens/closes door
+            if (!nearDoor.fixed) nearDoor.open = !nearDoor.open; // ghost opens/closes door
             recordGhostActivity("touchDoor");
           }
           if (ghostAction === "touchLightSwitch" && nearSwitch) {
@@ -2974,18 +2798,11 @@
         // Periodic interaction check
         ghostEventTimer -= delta;
         if (ghostEventTimer <= 0) {
-          // Ultimate test ghost: fire every 2s guaranteed; normal: 7–16s at 70%/25%
-          if (GHOST_CONFIG.forceUltimateGhost) {
-            ghostEventTimer = 2;
-          } else {
-            ghostEventTimer = (7 + Math.random() * 9) / beh.activityRate;
-          }
+          ghostEventTimer = (7 + Math.random() * 9) / beh.activityRate;
           const inFav = (ghostX > ghostFavRoom.x && ghostX < ghostFavRoom.x + ghostFavRoom.w &&
                          ghostY > ghostFavRoom.y && ghostY < ghostFavRoom.y + ghostFavRoom.h);
-          // Ultimate test ghost always fires; normal: roamTendency scales out-of-room chance
-          // Action modifier: interactNearby / checkEvidenceTarget raise evidence fire chance
           const actionBoost = (ghostAction === "interactNearby" || ghostAction === "checkEvidenceTarget") ? 0.25 : 0;
-          if (GHOST_CONFIG.forceUltimateGhost || Math.random() < (inFav ? 0.70 : 0.25 * beh.roamTendency) + actionBoost) {
+          if (Math.random() < (inFav ? 0.70 : 0.25 * beh.roamTendency) + actionBoost) {
             recordGhostActivity("ghostEvent"); // evidence block fired — record as activity
             const ev = currentGhost.evidence;
 
@@ -3066,9 +2883,7 @@
                                            ghostY > curRoom.y && ghostY < curRoom.y + curRoom.h);
           const roomIdx      = curRoom ? rooms.indexOf(curRoom) : -1;
           const lightsOff    = roomIdx < 0 || !roomLights[roomIdx]?.on;
-          // Ultimate test ghost: bypass lights-off requirement; room + range still apply
-          const conditionsMet = holdingBox && hasEvidence && withinRange && ghostRoom &&
-                                (lightsOff || GHOST_CONFIG.forceUltimateGhost);
+          const conditionsMet = holdingBox && hasEvidence && withinRange && ghostRoom && lightsOff;
           const responseChance = 0.65;
           if (conditionsMet && Math.random() < responseChance) {
             spiritBoxTimer      = 3.5;
@@ -3232,9 +3047,17 @@
       // Move player — check walkable rects, allow wall sliding
       const nx = player.x + dx;
       const ny = player.y + dy;
+      const _prevOutside = player.y + 8 > 720;
       if      (canMoveTo(nx, ny))         { player.x = nx; player.y = ny; }
       else if (canMoveTo(nx, player.y))   { player.x = nx; }
       else if (canMoveTo(player.x, ny))   { player.y = ny; }
+      const _nowOutside = player.y + 8 > 720;
+      // Trigger transition when crossing the threshold and no transition running
+      if (_prevOutside !== _nowOutside && _transDir === 0) {
+        _transDir        = 1;
+        _transAlpha      = 0;
+        _transLockedSide = _prevOutside; // lock to the side we were just on
+      }
       isMoving = (dx !== 0 || dy !== 0);
       if (isMoving) walkAngle = Math.atan2(dy, dx);
       // Slightly slower cycle (0.10 vs 0.12) = more natural stride cadence
@@ -3266,17 +3089,6 @@
         }
       }
 
-      // Update rain particles (scroll down + slight right drift; wrap around)
-      if (ENV[envModes[envModeIdx]].rain) {
-        const camX2 = player.x - canvas.width  / 2;
-        const camY2 = player.y - canvas.height / 2;
-        rainDrops.forEach(d => {
-          d.x += 1;
-          d.y += d.speed;
-          if (d.y - camY2 > canvas.height + 20) { d.y = camY2 - 10; d.x = camX2 + Math.random() * canvas.width; }
-          if (d.x - camX2 > canvas.width  + 20) { d.x = camX2 - 10; }
-        });
-      }
 
       // (Round ends via van keypad "Leave Site" button — not the exit zone)
     }
@@ -3482,21 +3294,104 @@
       ctx.scale(ZOOM, ZOOM);
       ctx.translate(-(player.x + 8), -(player.y + 8));
 
-      // Exterior perimeter walls
-      walls.forEach(w => _fillTiled(ctx, _tileWall, "#2a1f14", w.x, w.y, w.w, w.h));
+      const _rawOutside = player.y + 8 > 720;
+      const playerOutside = _transDir !== 0 ? _transLockedSide : _rawOutside;
 
-      // Room floors
-      rooms.forEach(r => {
-        _fillTiled(ctx, _roomTile(r.label), r.color, r.x, r.y, r.w, r.h);
-      });
 
-      // Room light overlay — darken rooms whose light is off OR breaker is off
-      roomLights.forEach((light, i) => {
-        if (!light.on || !housePowerOn) {
-          ctx.fillStyle = "rgba(0,0,0,0.80)";
-          ctx.fillRect(rooms[i].x, rooms[i].y, rooms[i].w, rooms[i].h);
-        }
-      });
+      if (!playerOutside) {
+        // ── INTERIOR ONLY — clip to house bounds so nothing bleeds outside ───
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(60, 60, 700, 660);
+        ctx.clip();
+
+        // Exterior perimeter walls
+        walls.forEach(w => { ctx.fillStyle = "#2a1f14"; ctx.fillRect(w.x, w.y, w.w, w.h); });
+
+        // Room floors
+        rooms.forEach(r => {
+          if (r.label === "Yard") return;
+          _drawRoomFloor(ctx, r);
+        });
+
+        // Door openings — punch through walls with a dark threshold gap
+        doors.forEach(d => {
+          if (d.fixed) return; // front door handled separately
+          const horiz = d.w > d.h; // horizontal wall = door spans width
+          if (d.open) {
+            // Open: draw a thin dark gap + small open-door panel along the hinge side
+            ctx.fillStyle = "#0e0b08";
+            ctx.fillRect(d.x, d.y, d.w, d.h);
+            // Open panel — swings 90° against the wall, shown as a thin slab
+            ctx.fillStyle = "#5a3e22";
+            if (horiz) {
+              // Panel folds north against the wall above the gap
+              ctx.fillRect(d.x, d.y - 5, d.w, 4);
+              ctx.fillStyle = "#7a5630";
+              ctx.fillRect(d.x, d.y - 5, d.w, 1);
+            } else {
+              // Panel folds west against the wall left of the gap
+              ctx.fillRect(d.x - 5, d.y, 4, d.h);
+              ctx.fillStyle = "#7a5630";
+              ctx.fillRect(d.x - 5, d.y, 1, d.h);
+            }
+          } else {
+            // Closed door — wood panel with frame and knob
+            // Outer frame (dark wood border)
+            ctx.fillStyle = "#3a2612";
+            ctx.fillRect(d.x, d.y, d.w, d.h);
+            // Inner panel face (lighter warm wood)
+            if (horiz) {
+              ctx.fillStyle = "#6b4520";
+              ctx.fillRect(d.x + 1, d.y + 1, d.w - 2, d.h - 2);
+              // Wood grain lines (horizontal, subtle)
+              ctx.fillStyle = "#5a3a18";
+              for (let gx = d.x + 3; gx < d.x + d.w - 3; gx += 5) {
+                ctx.fillRect(gx, d.y + 2, 1, d.h - 4);
+              }
+              // Top edge highlight (light catches the top face)
+              ctx.fillStyle = "#8a5c2a";
+              ctx.fillRect(d.x + 1, d.y + 1, d.w - 2, 1);
+              // Bottom shadow strip
+              ctx.fillStyle = "#2a1a0a";
+              ctx.fillRect(d.x + 1, d.y + d.h - 2, d.w - 2, 1);
+              // Knob — small circle on the south face, center-right
+              const kx = d.x + Math.floor(d.w * 0.72);
+              const ky = d.y + d.h - 1;
+              ctx.fillStyle = "#c8a040";
+              ctx.fillRect(kx - 1, ky - 1, 3, 2);
+            } else {
+              ctx.fillStyle = "#6b4520";
+              ctx.fillRect(d.x + 1, d.y + 1, d.w - 2, d.h - 2);
+              // Wood grain lines (vertical)
+              ctx.fillStyle = "#5a3a18";
+              for (let gy = d.y + 3; gy < d.y + d.h - 3; gy += 5) {
+                ctx.fillRect(d.x + 2, gy, d.w - 4, 1);
+              }
+              // Left edge highlight
+              ctx.fillStyle = "#8a5c2a";
+              ctx.fillRect(d.x + 1, d.y + 1, 1, d.h - 2);
+              // Right shadow strip
+              ctx.fillStyle = "#2a1a0a";
+              ctx.fillRect(d.x + d.w - 2, d.y + 1, 1, d.h - 2);
+              // Knob — east face, center-lower
+              const kx = d.x + d.w - 1;
+              const ky = d.y + Math.floor(d.h * 0.72);
+              ctx.fillStyle = "#c8a040";
+              ctx.fillRect(kx - 1, ky - 1, 2, 3);
+            }
+          }
+        });
+
+        // Room light overlay — darken rooms whose light is off OR breaker is off
+        roomLights.forEach((light, i) => {
+          if (rooms[i].label === "Yard") return;
+          if (!light.on || !housePowerOn) {
+            ctx.fillStyle = "rgba(0,0,0,0.80)";
+            ctx.fillRect(rooms[i].x, rooms[i].y, rooms[i].w, rooms[i].h);
+          }
+        });
+      }
 
       // Light switch indicators — near-flush wall plate, minimal visual footprint
       // Visual drawn +1px toward the wall vs the hitbox (light.x) so it reads as inset.
@@ -3515,6 +3410,8 @@
         ctx.fillRect(vx + 1, light.y + 2, 2, 2);
       });
 
+
+      if (!playerOutside) { // ── INTERIOR ELEMENTS ONLY ──────────────────────
 
       // Breaker box — garage west wall
       {
@@ -3538,24 +3435,6 @@
         }
       }
 
-      // Doors — wood panel when closed, small swung stub when open
-      doors.forEach(d => {
-        const horiz = d.w > d.h; // horizontal wall door (wide rect) vs vertical wall door (tall rect)
-        if (!d.open) {
-          // Closed: full door panel in warm wood
-          ctx.fillStyle = "#5a3a1a";
-          ctx.fillRect(d.x, d.y, d.w, d.h);
-          // Door knob hint
-          ctx.fillStyle = "#8a6030";
-          if (horiz) ctx.fillRect(d.x + d.w - 8, d.y + 2, 4, 4);
-          else       ctx.fillRect(d.x + 2, d.y + d.h - 8, 4, 4);
-        } else {
-          // Open: thin panel stub swung against the wall on one side
-          ctx.fillStyle = "#4a3018";
-          if (horiz) ctx.fillRect(d.x, d.y - 8, 8, 10); // panel swung up
-          else       ctx.fillRect(d.x - 8, d.y, 10, 8); // panel swung left
-        }
-      });
 
       // --- UV marks — fingerprint smudges; only visible when UV light overlaps them ---
       for (const m of uvMarks) {
@@ -3620,15 +3499,6 @@
       ctx.fillStyle = "#252218"; ctx.fillRect(308, 84, 4, 512);
       ctx.fillStyle = "#1a1812"; ctx.fillRect(344, 84, 4, 512);
 
-      // Yard — ground variation clusters (3-tone patches, no rgba)
-      { const patches = [
-          [80,740,60,18,"#18261a"],[160,755,50,14,"#142010"],[240,745,70,16,"#1c2a1c"],
-          [340,760,55,18,"#18261a"],[420,742,65,12,"#1a2818"],[520,758,45,16,"#162214"],
-          [600,748,60,14,"#1c2a1c"],[680,765,55,16,"#14200e"],[100,790,80,12,"#142010"],
-          [220,785,65,14,"#18261a"],[360,800,75,12,"#162214"],[500,788,60,16,"#1a2818"],
-        ];
-        patches.forEach(([px,py,pw,ph,pc]) => { ctx.fillStyle = pc; ctx.fillRect(px,py,pw,ph); });
-      }
 
       // --- Room edge definition — pixel-art solid strips, no rgba ---
       // Per-room: north highlight strip, south shadow strip, east shadow strip
@@ -3657,146 +3527,244 @@
         ctx.fillStyle = sh; ctx.fillRect(r.x, r.y, 2, r.h);            // west contact shadow
       }
 
+      // Front door opening marker — visible from inside, on the south wall
+      // Dark archway surround
+      ctx.fillStyle = "#0e0c08";
+      ctx.fillRect(381, 712, 38, 10); // top beam
+      ctx.fillRect(381, 712, 4, 8);   // left jamb
+      ctx.fillRect(415, 712, 4, 8);   // right jamb
+      // Opening — slightly lighter than pure black to read as a threshold
+      ctx.fillStyle = "#0a0806";
+      ctx.fillRect(385, 716, 30, 6);
+      // Threshold line on floor
+      ctx.fillStyle = "#5a5448";
+      ctx.fillRect(381, 718, 38, 2);
+      ctx.fillStyle = "rgba(255,255,255,0.06)";
+      ctx.fillRect(381, 718, 38, 1);
+      // Subtle warm glow from outside light bleeding through
+      const _dGlow = ctx.createRadialGradient(400, 720, 0, 400, 720, 50);
+      _dGlow.addColorStop(0,   "rgba(200,160,80,0.12)");
+      _dGlow.addColorStop(1,   "rgba(200,160,80,0)");
+      ctx.fillStyle = _dGlow;
+      ctx.fillRect(360, 680, 80, 60);
 
-      // Roof + exterior walls — only visible when player is outside
-      const playerOutside = player.y + 8 > 720;
-      if (playerOutside) {
-
-        // ── EXTERIOR WALL FACES (south + east — the sides facing the yard) ──────
-        // South wall face (visible from yard — gives house height/depth)
-        ctx.fillStyle = "#3a3028"; // stucco/siding
-        ctx.fillRect(60, 720, 700, 20);
-        // Brick rows on south face
-        ctx.fillStyle = "#2e2418";
-        for (let bx = 65; bx < 756; bx += 22) {
-          ctx.fillRect(bx, 722, 19, 7);
-          ctx.fillRect(bx + 11, 730, 19, 7);
-        }
-        // Top shadow (eave overhangs wall — casts shadow)
-        ctx.fillStyle = "rgba(0,0,0,0.55)";
-        ctx.fillRect(60, 720, 700, 5);
-        // Bottom edge of wall face
-        ctx.fillStyle = "#1c1610";
-        ctx.fillRect(60, 738, 700, 2);
-
-        // East wall face
-        ctx.fillStyle = "#342e24";
-        ctx.fillRect(740, 60, 20, 680);
-        ctx.fillStyle = "rgba(0,0,0,0.45)"; // shadow (left side of east face)
-        ctx.fillRect(740, 60, 5, 680);
-
-        // ── ROOF BODY ────────────────────────────────────────────────────────────
-        // Base fill (covers full house outer boundary)
-        ctx.fillStyle = "#191510";
-        ctx.fillRect(60, 60, 700, 660);
-
-        // West residential wing — slightly warmer tone
-        ctx.fillStyle = "#1f1b12";
-        ctx.fillRect(60, 60, 302, 662);
-        // East living/dining/kitchen wing
-        ctx.fillStyle = "#1c1910";
-        ctx.fillRect(360, 60, 382, 502);
-        // Garage + utility section (lower, flatter)
-        ctx.fillStyle = "#181410";
-        ctx.fillRect(556, 496, 208, 226);
-        // Foyer / south porch section
-        ctx.fillStyle = "#1a1810";
-        ctx.fillRect(296, 596, 268, 126);
-
-        // South-slope tint (subtle lighter wash — south face catches ambient sky)
-        ctx.fillStyle = "rgba(60,50,30,0.18)";
-        ctx.fillRect(60, 390, 700, 330);
-
-        // ── SHINGLE TEXTURE (horizontal rows) ───────────────────────────────────
-        ctx.fillStyle = "rgba(0,0,0,0.16)";
-        for (let sy = 62; sy < 716; sy += 6) ctx.fillRect(60,  sy, 302, 2); // west wing
-        for (let sy = 62; sy < 497; sy += 6) ctx.fillRect(360, sy, 382, 2); // east wing
-        for (let sy = 498; sy < 716; sy += 6) ctx.fillRect(556, sy, 208, 2); // garage
-        for (let sy = 598; sy < 716; sy += 6) ctx.fillRect(296, sy, 268, 2); // foyer
-
-        // ── RIDGE LINES (roof peak — raised, slightly brighter) ─────────────────
-        // West wing: N-S ridge down center (~x:220)
-        ctx.fillStyle = "#38300e";
-        ctx.fillRect(216, 60, 10, 662);
-        ctx.fillStyle = "rgba(255,245,200,0.1)";
-        ctx.fillRect(217, 60, 3, 662);
-
-        // East wing: E-W ridge (~y:282, center of living room height)
-        ctx.fillStyle = "#363020";
-        ctx.fillRect(360, 278, 382, 9);
-        ctx.fillStyle = "rgba(255,245,200,0.08)";
-        ctx.fillRect(360, 279, 382, 3);
-
-        // Garage: E-W ridge
-        ctx.fillStyle = "#2e2818";
-        ctx.fillRect(556, 600, 208, 7);
-        ctx.fillStyle = "rgba(255,245,200,0.06)";
-        ctx.fillRect(556, 601, 208, 2);
-
-        // ── ROOF VALLEYS (where sections meet — dark crease) ────────────────────
-        ctx.fillStyle = "#0c0a06";
-        ctx.fillRect(355, 60,  7, 502);  // west/east wing valley
-        ctx.fillRect(553, 492, 7, 230);  // east-wing/garage vertical valley
-        ctx.fillRect(553, 492, 215, 7);  // garage horizontal valley
-        ctx.fillRect(293, 592, 7, 130);  // foyer NW valley
-        ctx.fillRect(556, 592, 7, 130);  // foyer NE valley
-
-        // ── EAVES + FASCIA (roof edge trim boards) ───────────────────────────────
-        // North eave fascia
-        ctx.fillStyle = "#4a4032";
-        ctx.fillRect(60, 60, 700, 7);
-        // West eave fascia
-        ctx.fillRect(60, 60, 7, 660);
-        // South eave fascia (overhangs south wall)
-        ctx.fillRect(60, 714, 700, 7);
-        // East eave fascia
-        ctx.fillRect(734, 60, 7, 660);
-        // Eave top highlights (NW light)
-        ctx.fillStyle = "rgba(255,250,220,0.1)";
-        ctx.fillRect(60, 60, 700, 2);
-        ctx.fillRect(60, 60, 2, 660);
-        // South/east eave underside shadow (dropped onto wall face)
-        ctx.fillStyle = "rgba(0,0,0,0.55)";
-        ctx.fillRect(60, 721, 700, 4);
-        ctx.fillRect(741, 60, 4, 660);
-
-        // ── GUTTERS (thin metal trim at eave bottoms) ────────────────────────────
-        ctx.fillStyle = "#5a5040";
-        ctx.fillRect(60,  60, 700, 2); // north gutter
-        ctx.fillRect(60,  60, 2,  660); // west gutter
-        ctx.fillRect(60, 719, 700, 2); // south gutter
-        ctx.fillRect(738, 60, 2,  660); // east gutter
-
-        // ── CHIMNEY ──────────────────────────────────────────────────────────────
-        // Shadow
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(702, 100, 30, 26);
-        // Chimney body
-        ctx.fillStyle = "#4a3830";
-        ctx.fillRect(698, 94, 28, 24);
-        // Top face (lighter — sky-lit)
-        ctx.fillStyle = "#5e4c40";
-        ctx.fillRect(700, 94, 24, 16);
-        // Brick mortar lines
-        ctx.fillStyle = "#2e2018";
-        for (let mr = 0; mr < 3; mr++) ctx.fillRect(700, 99 + mr * 5, 24, 2); // horiz
-        for (let mc = 0; mc < 4; mc++) ctx.fillRect(703 + mc * 6, 94, 2, 16); // vert
-        // Chimney cap (overhanging slab)
-        ctx.fillStyle = "#2a2016";
-        ctx.fillRect(697, 90, 30, 6);
-        ctx.fillStyle = "rgba(255,255,200,0.08)";
-        ctx.fillRect(697, 90, 30, 2);
+      } // end interior elements
+      if (!playerOutside) {
+        ctx.restore(); // end interior clip
+        // Outside area is pure black when inside
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(60, 720, 700, 320);
       }
 
-      // Outside zones — drawn over the Outside room rect for visual distinction
-      ctx.fillStyle = "#18281a"; // grass — natural dark green
-      ctx.fillRect(60, 720, 310, 160);
-      ctx.fillStyle = "#18281a"; // grass right strip
-      ctx.fillRect(440, 720, 120, 160);
-      ctx.fillStyle = "#302e28"; // walkway — concrete gray-tan
-      ctx.fillRect(370, 720, 70, 160);
-      ctx.fillStyle = "#242220"; // driveway — warm asphalt
-      ctx.fillRect(560, 720, 180, 160);
+      // Roof + exterior — only visible when player is outside
+      if (playerOutside) {
+        // Interior is pure black under the roof when outside
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(60, 60, 700, 660);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(60, 60, 700, 1022);
+        ctx.clip();
+
+        // ── ROOF BODY ────────────────────────────────────────────────────────────
+        // West wing — warm dark shingle
+        ctx.fillStyle = "#22201a";
+        ctx.fillRect(60, 60, 296, 660);
+        // East wing
+        ctx.fillStyle = "#1e1c16";
+        ctx.fillRect(356, 60, 384, 500);
+        // Garage section
+        ctx.fillStyle = "#1a1814";
+        ctx.fillRect(556, 496, 208, 228);
+        // Foyer porch section
+        ctx.fillStyle = "#201e18";
+        ctx.fillRect(296, 596, 264, 128);
+
+        // South slope — lighter on the south face (catches sky light), gives depth
+        ctx.fillStyle = "rgba(80,70,50,0.22)";
+        ctx.fillRect(60, 500, 700, 224);
+        ctx.fillStyle = "rgba(100,85,55,0.12)";
+        ctx.fillRect(60, 600, 700, 124);
+
+        // ── SHINGLE ROWS ─────────────────────────────────────────────────────────
+        ctx.fillStyle = "rgba(0,0,0,0.18)";
+        for (let sy = 62; sy < 720; sy += 7) {
+          ctx.fillRect(60,  sy, 296, 2);
+          ctx.fillRect(356, sy, 384, 2);
+          ctx.fillRect(556, sy, 208, 2);
+          ctx.fillRect(296, sy, 264, 2);
+        }
+        // Shingle highlight (every other row — slight raised edge)
+        ctx.fillStyle = "rgba(255,255,200,0.04)";
+        for (let sy = 64; sy < 720; sy += 7) {
+          ctx.fillRect(60,  sy, 296, 1);
+          ctx.fillRect(356, sy, 384, 1);
+        }
+
+        // ── RIDGE LINES ──────────────────────────────────────────────────────────
+        ctx.fillStyle = "#2e2810";
+        ctx.fillRect(214, 60, 12, 620);   // west wing N-S ridge (stops before south wall face)
+        ctx.fillStyle = "rgba(255,245,180,0.12)";
+        ctx.fillRect(216, 60, 4, 620);
+
+        ctx.fillStyle = "#2c2818";
+        ctx.fillRect(356, 274, 384, 10);  // east wing E-W ridge
+        ctx.fillStyle = "rgba(255,245,180,0.08)";
+        ctx.fillRect(356, 275, 384, 3);
+
+        ctx.fillStyle = "#282410";
+        ctx.fillRect(556, 598, 208, 8);   // garage ridge
+        ctx.fillStyle = "rgba(255,245,180,0.06)";
+        ctx.fillRect(556, 599, 208, 2);
+
+        // ── VALLEYS ──────────────────────────────────────────────────────────────
+        ctx.fillStyle = "#080806";
+        ctx.fillRect(352, 60,  8, 500);
+        ctx.fillRect(552, 492, 8, 232);
+        ctx.fillRect(552, 492, 216, 8);
+        ctx.fillRect(292, 592, 8, 132);
+        ctx.fillRect(556, 592, 8, 132);
+
+        // ── SOUTH FACE WALL — bottom edge of roof styled as visible wall ─────────
+        // The south eave overhang becomes a thick wall face: darker, flat-lit band.
+        // No collision change needed — it's just the roof edge drawn taller and lighter.
+        // Main house south wall face (x:60–296, west wing)
+        ctx.fillStyle = "#3a3428";
+        ctx.fillRect(60, 680, 236, 42);
+        // Siding planks
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        for (let wy = 682; wy < 720; wy += 5) ctx.fillRect(60, wy, 236, 2);
+        ctx.fillStyle = "rgba(255,255,255,0.04)";
+        for (let wy = 683; wy < 720; wy += 5) ctx.fillRect(60, wy, 236, 1);
+        // Top overhang shadow
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(60, 680, 236, 6);
+        // Bottom ground shadow
+        ctx.fillStyle = "rgba(0,0,0,0.30)";
+        ctx.fillRect(60, 716, 236, 4);
+
+        // West wing window on south face
+        ctx.fillStyle = "#181e28"; ctx.fillRect(130, 685, 50, 28);
+        ctx.fillStyle = "#0c1420"; ctx.fillRect(133, 688, 44, 22);
+        ctx.fillStyle = "#2e2416"; ctx.fillRect(154, 688, 2, 22);
+        ctx.fillRect(133, 698, 44, 2);
+        ctx.fillStyle = "rgba(160,200,255,0.07)"; ctx.fillRect(134, 689, 10, 6);
+        ctx.fillStyle = "#5a5040"; ctx.fillRect(128, 712, 54, 3);
+
+        // Foyer south wall face (x:296–556) — projects slightly further
+        ctx.fillStyle = "#42382c";
+        ctx.fillRect(296, 676, 260, 46);
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        for (let wy = 678; wy < 720; wy += 5) ctx.fillRect(296, wy, 260, 2);
+        ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(296, 676, 260, 6);
+        ctx.fillStyle = "rgba(0,0,0,0.30)"; ctx.fillRect(296, 716, 260, 4);
+        // Side depth shadows (foyer projects further than west wing)
+        ctx.fillStyle = "rgba(0,0,0,0.40)";
+        ctx.fillRect(294, 676, 4, 46);
+        ctx.fillRect(554, 676, 4, 46);
+
+        // Foyer window (east side of foyer face, x:490–540)
+        ctx.fillStyle = "#181e28"; ctx.fillRect(490, 682, 50, 30);
+        ctx.fillStyle = "#0c1420"; ctx.fillRect(493, 685, 44, 24);
+        ctx.fillStyle = "#2e2416"; ctx.fillRect(514, 685, 2, 24);
+        ctx.fillRect(493, 696, 44, 2);
+        ctx.fillStyle = "rgba(160,200,255,0.07)"; ctx.fillRect(494, 686, 10, 6);
+        ctx.fillStyle = "#5a5040"; ctx.fillRect(488, 713, 54, 3);
+
+        // Front door opening — pure black gap in the foyer face
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(383, 676, 34, 46);
+        // Door frame sides
+        ctx.fillStyle = "#1a1410";
+        ctx.fillRect(381, 676, 4, 46);
+        ctx.fillRect(415, 676, 4, 46);
+        // Door frame top
+        ctx.fillRect(381, 676, 38, 4);
+        // Threshold
+        ctx.fillStyle = "#6e6a60";
+        ctx.fillRect(379, 720, 42, 4);
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(379, 720, 42, 1);
+
+        // Garage south wall face (x:556–760) — shorter, darker concrete
+        ctx.fillStyle = "#302c26";
+        ctx.fillRect(556, 684, 204, 38);
+        ctx.fillStyle = "rgba(0,0,0,0.10)";
+        for (let wy = 686; wy < 720; wy += 5) ctx.fillRect(556, wy, 204, 2);
+        ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(556, 684, 204, 6);
+        ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(556, 716, 204, 4);
+        // Step-down shadow where garage is shorter than main wall
+        ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fillRect(554, 676, 4, 46);
+
+        // Garage door — closed white ribbed panel
+        const GDL = 568, GDR = 748, GDT = 684, GDB = 720;
+        const GDW = GDR - GDL, GDH = GDB - GDT;
+        // Door panel face — off-white steel
+        ctx.fillStyle = "#ccc8be";
+        ctx.fillRect(GDL, GDT, GDW, GDH);
+        // Top eave shadow
+        ctx.fillStyle = "rgba(0,0,0,0.45)";
+        ctx.fillRect(GDL, GDT, GDW, 5);
+        // Bottom ground shadow
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.fillRect(GDL, GDB-4, GDW, 4);
+        // Horizontal panel ribs (3 sections)
+        const ribStep = Math.floor(GDH / 3);
+        ctx.fillStyle = "rgba(0,0,0,0.20)";
+        ctx.fillRect(GDL, GDT + ribStep,   GDW, 2);
+        ctx.fillRect(GDL, GDT + ribStep*2, GDW, 2);
+        ctx.fillStyle = "rgba(255,255,255,0.25)";
+        ctx.fillRect(GDL, GDT + ribStep   + 2, GDW, 1);
+        ctx.fillRect(GDL, GDT + ribStep*2 + 2, GDW, 1);
+        // Vertical center seam
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        ctx.fillRect((GDL+GDR)/2 - 1, GDT+5, 2, GDH-9);
+        // Panel surface texture — subtle vertical streaks
+        ctx.fillStyle = "rgba(0,0,0,0.05)";
+        for (let gx = GDL+12; gx < GDR-10; gx += 22) ctx.fillRect(gx, GDT+5, 1, GDH-9);
+        // Door highlight — left side catches light
+        ctx.fillStyle = "rgba(255,255,255,0.18)";
+        ctx.fillRect(GDL, GDT+5, 4, GDH-9);
+        // Track guides on sides
+        ctx.fillStyle = "#1e1c18";
+        ctx.fillRect(GDL-4, GDT, 5, GDH);
+        ctx.fillRect(GDR-1, GDT, 5, GDH);
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(GDL-3, GDT, 1, GDH);
+        ctx.fillRect(GDR, GDT, 1, GDH);
+
+        // ── EAVES + FASCIA ────────────────────────────────────────────────────────
+        // ── EAVES + FASCIA ── north only
+        ctx.fillStyle = "#1e1e1a";
+        ctx.fillRect(60, 60, 700, 6);
+        ctx.fillStyle = "rgba(255,255,255,0.06)";
+        ctx.fillRect(60, 60, 700, 1);
+
+        // ── GUTTERS ── north only
+        ctx.fillStyle = "#2a2a26";
+        ctx.fillRect(60, 60, 700, 2);
+
+        // ── CHIMNEY ───────────────────────────────────────────────────────────────
+        ctx.fillStyle = "rgba(0,0,0,0.45)";
+        ctx.fillRect(704, 102, 28, 24);
+        ctx.fillStyle = "#3e2e24";
+        ctx.fillRect(700, 96, 26, 22);
+        ctx.fillStyle = "#50403a";
+        ctx.fillRect(702, 96, 22, 14);
+        ctx.fillStyle = "#241810";
+        for (let mr = 0; mr < 3; mr++) ctx.fillRect(702, 101 + mr*5, 22, 1);
+        for (let mc = 0; mc < 3; mc++) ctx.fillRect(704 + mc*7, 96, 1, 14);
+        ctx.fillStyle = "#201610";
+        ctx.fillRect(699, 92, 28, 5);
+        ctx.fillStyle = "rgba(255,255,200,0.06)";
+        ctx.fillRect(699, 92, 28, 1);
+      }
+      if (playerOutside) ctx.restore(); // end exterior clip
+
+      // Outside zones removed — replaced by Pixel Lab map composite
+
+      if (playerOutside) { // ── ALL REMAINING OUTSIDE DRAWING ────────────────
 
       // Night darkness overlay — outside feels dark; alpha depends on environment mode
       if (env.outsideAlpha > 0) {
@@ -3868,41 +3836,129 @@
       ctx.fillStyle = fdGrad;
       ctx.fillRect(342, 720, 116, 116);
 
-      // Road / street — bottom strip (deepened to 100px for large van)
-      ctx.fillStyle = "#181716"; // road — dark asphalt
-      ctx.fillRect(60, 880, 700, 100);
-      ctx.fillStyle = "#242220"; // curb line
-      ctx.fillRect(60, 880, 700, 3);
+
+      // ── OUTSIDE GROUND LAYERS ────────────────────────────────────────────────
+      const CONCRETE = "#6e6a60";
+      const CONCRETE_CRACK = "rgba(0,0,0,0.14)";
+
+      // Road — fills from curb bottom (864) to boundary tape (982)
+      ctx.fillStyle = "#252525";
+      ctx.fillRect(64, 864, 692, 118);
+      ctx.fillStyle = "rgba(0,0,0,0.16)";
+      for (let ry = 866; ry < 982; ry += 4) {
+        for (let rx = 64; rx < 756; rx += 18) {
+          if ((rx + ry) % 36 < 9) ctx.fillRect(rx, ry, 9, 1);
+        }
+      }
+      // Road center dashed line
+      ctx.fillStyle = "#c8a020";
+      for (let lx = 84; lx < 746; lx += 28) ctx.fillRect(lx, 922, 16, 3);
+
+      // Curb
+      ctx.fillStyle = CONCRETE;
+      ctx.fillRect(60, 856, 700, 6);
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.fillRect(60, 856, 700, 2);
+      ctx.fillStyle = "rgba(0,0,0,0.30)";
+      ctx.fillRect(60, 860, 700, 2);
+      ctx.fillStyle = "rgba(0,0,0,0.20)";
+      ctx.fillRect(60, 862, 700, 2);
+
+      // Sidewalk — full base, top to curb
+      ctx.fillStyle = CONCRETE;
+      ctx.fillRect(60, 740, 700, 116);
+      ctx.fillStyle = CONCRETE_CRACK;
+      for (let sy = 740; sy < 856; sy += 32) ctx.fillRect(60, sy, 700, 1);
+      for (let sx = 60; sx < 760; sx += 48) ctx.fillRect(sx, 740, 1, 116);
+      // Fade to shadow near curb
+      ctx.fillStyle = "rgba(0,0,0,0.14)";
+      ctx.fillRect(60, 850, 700, 6);
+
+      // Driveway — same base, over sidewalk, slightly worn
+      ctx.fillStyle = CONCRETE;
+      ctx.fillRect(560, 720, 200, 136);
+      ctx.fillStyle = "rgba(0,0,0,0.10)";
+      ctx.fillRect(560, 720, 200, 136);
+      ctx.fillStyle = CONCRETE_CRACK;
+      for (let dy2 = 744; dy2 < 856; dy2 += 28) ctx.fillRect(560, dy2, 200, 1);
+      ctx.fillRect(618, 720, 1, 136);
+      ctx.fillRect(678, 720, 1, 136);
+      ctx.fillRect(738, 720, 1, 136);
+      ctx.fillStyle = "rgba(0,0,0,0.08)";
+      ctx.fillRect(578, 730, 16, 106);
+      ctx.fillRect(722, 730, 16, 106);
+      // Driveway left edge — shadow where it meets grass
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.fillRect(560, 720, 3, 136);
+
+      // Front path — same base, over sidewalk
+      ctx.fillStyle = CONCRETE;
+      ctx.fillRect(381, 720, 38, 136);
+      ctx.fillStyle = "rgba(0,0,0,0.08)";
+      ctx.fillRect(381, 720, 38, 136);
+      ctx.fillStyle = CONCRETE_CRACK;
+      for (let py2 = 744; py2 < 856; py2 += 24) ctx.fillRect(381, py2, 38, 1);
+      // Path side edges — shadow where grass meets path
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.fillRect(381, 720, 3, 116);
+      ctx.fillRect(416, 720, 3, 116);
+
+      // Grass — drawn on top, pushed all the way up to house wall (y:720)
+      ctx.fillStyle = "#1c2c14";
+      ctx.fillRect(60,  720, 321, 136);  // west strip (up to path)
+      ctx.fillRect(419, 720, 141, 136);  // east strip (path to driveway)
+      // Grass → concrete edge: dark shadow strip at south edge
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.fillRect(60,  852, 321, 4);
+      ctx.fillRect(419, 852, 141, 4);
+      // Grass texture
+      ctx.fillStyle = "rgba(40,80,20,0.38)";
+      for (let gy = 722; gy < 856; gy += 5) {
+        for (let gx = 62; gx < 560; gx += 7) {
+          if ((gx + gy) % 11 < 4 && !(gx > 381 && gx < 419)) {
+            ctx.fillRect(gx, gy, 1, 3);
+          }
+        }
+      }
+      ctx.fillStyle = "rgba(80,160,40,0.16)";
+      for (let gy = 722; gy < 856; gy += 9) {
+        for (let gx = 64; gx < 560; gx += 13) {
+          if ((gx * 3 + gy) % 17 < 5 && !(gx > 381 && gx < 419)) {
+            ctx.fillRect(gx, gy, 2, 2);
+          }
+        }
+      }
+
+      // Curb cuts — small raised lips where driveway and path meet the road (y:856 edge)
+      // These are the lowered curb sections (slightly lighter = raised concrete lip each side)
+      // Path curb cuts — left and right side of path opening
+      ctx.fillStyle = CONCRETE;
+      ctx.fillRect(378, 856, 5, 8);   // path left curb nub
+      ctx.fillRect(416, 856, 5, 8);   // path right curb nub
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.fillRect(378, 856, 5, 2);
+      ctx.fillRect(416, 856, 5, 2);
+      ctx.fillStyle = "rgba(0,0,0,0.30)";
+      ctx.fillRect(378, 862, 5, 2);
+      ctx.fillRect(416, 862, 5, 2);
+      // Driveway curb cuts — left and right side of driveway opening
+      ctx.fillStyle = CONCRETE;
+      ctx.fillRect(557, 856, 5, 8);   // driveway left curb nub
+      ctx.fillRect(755, 856, 5, 8);   // driveway right curb nub
+      ctx.fillStyle = "rgba(255,255,255,0.12)";
+      ctx.fillRect(557, 856, 5, 2);
+      ctx.fillRect(755, 856, 5, 2);
+      ctx.fillStyle = "rgba(0,0,0,0.30)";
+      ctx.fillRect(557, 862, 5, 2);
+      ctx.fillRect(755, 862, 5, 2);
+
+      // (south face wall removed)
 
       // Yellow boundary tape — wraps outside the full playable area (drawn before van so van covers it)
       ctx.fillStyle = "#c8a800";
-      ctx.fillRect( 60, 720,   4, 266); // left edge  (y:720–986, outside road south strip)
-      ctx.fillRect(756, 720,   4, 266); // right edge (y:720–986)
-      ctx.fillRect( 60, 982, 700,   4); // bottom edge (y:982, just below road south strip)
+      ctx.fillRect(756, 720,   4, 266); // right edge
+      ctx.fillRect( 60, 982, 700,   4); // bottom edge
 
-      // Rain — drawn after road/tape so streaks appear on top of ground surfaces
-      // Van body drawn immediately after covers its interior pixels
-      if (env.rain) {
-        ctx.save();
-        ctx.beginPath();
-        if (playerOutside) {
-          // Roof visible from outside — rain falls on roof + yard + road
-          ctx.rect(60, 60, 700, 922);
-        } else {
-          // Player inside — only outside area; interior rooms stay dry
-          ctx.rect(60, 720, 700, 262);
-        }
-        ctx.clip();
-        ctx.strokeStyle = "rgba(180,210,255,0.35)";
-        ctx.lineWidth = 1;
-        rainDrops.forEach(d => {
-          ctx.beginPath();
-          ctx.moveTo(d.x, d.y);
-          ctx.lineTo(d.x + 2, d.y + d.len);
-          ctx.stroke();
-        });
-        ctx.restore();
-      }
 
       // Van — top-down investigation van; cab (west/left), back doors (east/right)
       // Drop shadow
@@ -4063,6 +4119,34 @@
       ctx.fillStyle = "#204050"; ctx.fillRect(287, 900, 6, 2); ctx.fillRect(308, 900, 6, 2);
       ctx.fillStyle = "#2a4860"; ctx.font = "4px monospace";
       ctx.fillText("4MNT", 292, 908);
+
+      // When player is outside, cover interior with solid van roof
+      // Show solid roof only when player is NOT inside the van
+      const playerInVan = player.x + 8 > 188 && player.x + 8 < 360 && player.y + 8 > 894 && player.y + 8 < 958;
+      if (!playerInVan) {
+        ctx.fillStyle = "#1e2d3a";
+        ctx.fillRect(188, 894, 164, 64);
+        ctx.fillStyle = "#263444";
+        ctx.fillRect(196, 898, 148, 56);
+        // Panel seam lines
+        ctx.fillStyle = "rgba(0,0,0,0.28)";
+        ctx.fillRect(196, 916, 148, 2);
+        ctx.fillRect(196, 934, 148, 2);
+        ctx.fillRect(248, 898, 2, 56);
+        ctx.fillRect(296, 898, 2, 56);
+        // Top-left highlight
+        ctx.fillStyle = "rgba(255,255,255,0.07)";
+        ctx.fillRect(196, 898, 148, 3);
+        ctx.fillRect(196, 898, 3, 56);
+        // Faint label on roof
+        ctx.font = "7px monospace";
+        ctx.fillStyle = "rgba(255,255,255,0.10)";
+        ctx.textAlign = "center";
+        ctx.fillText("INVESTIGATION VAN", 270, 930);
+        ctx.textAlign = "left";
+      }
+
+      } // end playerOutside drawing
 
       // --- Furniture (valid camera surfaces) ---
       // Draw before worldItems so camera placed on furniture renders on top of it (not behind it)
@@ -5241,30 +5325,48 @@
         }
       }
 
-      // --- Voodoo Doll ghost appearance (shoulder/hunt pins) ---
-      // Translucent ghost — sprite with grey desaturate tint, pulsing alpha
-      if (currentGhost && ghostAppearTimer > 0) {
-        const pulse = 0.5 + 0.15 * Math.sin(Date.now() / 300); // slow fade pulse
-        const alpha = Math.min(1, ghostAppearTimer) * 0.55 * pulse + 0.1;
-        const dir = _angleToDir8(ghostMoveAngle);
-        const isWalking = ghostPauseTimer <= 0;
-        const img = isWalking ? _ghostSpriteWalk[dir][_ghostSpriteFrame] : _ghostSpriteIdle[dir];
-        if (img && img.complete && img.naturalWidth > 0) {
-          const W = 48, H = Math.round(48 * (img.naturalHeight / img.naturalWidth));
-          ctx.save();
-          ctx.globalAlpha = alpha;
-          // Draw sprite
-          ctx.drawImage(img, Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
-          // Grey desaturate overlay — gives it the cold translucent look
-          ctx.globalCompositeOperation = "saturation";
-          ctx.fillStyle = "rgba(128,128,128,1)";
-          ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
-          ctx.globalCompositeOperation = "source-over";
-          // Slight blue-grey tint
-          ctx.globalAlpha = alpha * 0.3;
-          ctx.fillStyle = "rgba(180,200,220,1)";
-          ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
-          ctx.restore();
+      // --- Ghost render — during hunt or via voodoo/tarot appear timer ---
+      if (currentGhost && (ghostHunting || ghostAppearTimer > 0)) {
+        const vis = (currentGhost.behavior && currentGhost.behavior.visibilityDuringHunt) || "blink";
+        // During hunt: solid/blink/stealth modes; outside hunt: translucent timer-based
+        let ghostVisible = true;
+        let alpha;
+        if (ghostHunting) {
+          if (vis === "stealth") {
+            ghostVisible = false; // Deogen-like: invisible during hunt
+          } else if (vis === "blink") {
+            // Blinks on/off every ~0.4s
+            ghostVisible = Math.sin(huntBlinkT * Math.PI / 0.4) > -0.3;
+            alpha = ghostVisible ? 0.85 : 0;
+          } else {
+            // solid
+            alpha = 0.9;
+          }
+        } else {
+          // Non-hunt appear timer (voodoo/tarot)
+          const pulse = 0.5 + 0.15 * Math.sin(Date.now() / 300);
+          alpha = Math.min(1, ghostAppearTimer) * 0.55 * pulse + 0.1;
+        }
+        if (ghostVisible) {
+          const dir = _angleToDir8(ghostMoveAngle);
+          const isWalking = ghostHunting || ghostPauseTimer <= 0;
+          const img = isWalking ? _ghostSpriteWalk[dir][_ghostSpriteFrame] : _ghostSpriteIdle[dir];
+          if (img && img.complete && img.naturalWidth > 0) {
+            const W = 48, H = Math.round(48 * (img.naturalHeight / img.naturalWidth));
+            ctx.save();
+            ctx.globalAlpha = alpha ?? 0.7;
+            ctx.drawImage(img, Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
+            // Grey desaturate overlay
+            ctx.globalCompositeOperation = "saturation";
+            ctx.fillStyle = "rgba(128,128,128,1)";
+            ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
+            ctx.globalCompositeOperation = "source-over";
+            // Hunt tint: red; non-hunt tint: blue-grey
+            ctx.globalAlpha = (alpha ?? 0.7) * 0.35;
+            ctx.fillStyle = ghostHunting ? "rgba(220,60,60,1)" : "rgba(180,200,220,1)";
+            ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
+            ctx.restore();
+          }
         }
       }
 
@@ -5477,46 +5579,45 @@
       }
 
       // Current room — fully visible if lit; flashlight only if dark
-      if (curRoom) {
+      if (!playerOutside && curRoom) {
         const litIdx = rooms.indexOf(curRoom);
         const curLit = litIdx < roomLights.length ? roomLights[litIdx].on : true;
         if (curLit) fogCtx.fillRect(curRoom.x, curRoom.y, curRoom.w, curRoom.h);
-        drawFlashlightInRoom(curRoom);   // regular flashlight cone in current room
-        drawUVFlashlightInRoom(curRoom); // UV flashlight (weaker) in current room
+        drawFlashlightInRoom(curRoom);
+        drawUVFlashlightInRoom(curRoom);
       }
 
-      // Open doorway wedges — geometric cone; skip if adjacent room is unlit (dark room)
-      wedges.forEach(({ room, e1, e2 }) => {
-        const adjIdx = rooms.indexOf(room);
-        const adjLit = adjIdx < roomLights.length ? roomLights[adjIdx].on : true;
+      // Open doorway wedges — only when inside
+      if (!playerOutside) {
+        wedges.forEach(({ room, e1, e2 }) => {
+          const adjIdx = rooms.indexOf(room);
+          const adjLit = adjIdx < roomLights.length ? roomLights[adjIdx].on : true;
 
-        if (adjLit) {
-          // Room is lit — show full geometric wedge
-          fogCtx.save();
-          fogCtx.beginPath();
-          fogCtx.rect(room.x, room.y, room.w, room.h);
-          fogCtx.clip();
-          const dist = 2000;
-          const d1 = Math.hypot(e1.x - px, e1.y - py) || 1;
-          const d2 = Math.hypot(e2.x - px, e2.y - py) || 1;
-          fogCtx.beginPath();
-          fogCtx.moveTo(px, py);
-          fogCtx.lineTo(px + (e1.x-px)/d1*dist, py + (e1.y-py)/d1*dist);
-          fogCtx.lineTo(px + (e2.x-px)/d2*dist, py + (e2.y-py)/d2*dist);
-          fogCtx.closePath();
-          fogCtx.fill();
-          fogCtx.restore();
-        }
+          if (adjLit) {
+            fogCtx.save();
+            fogCtx.beginPath();
+            fogCtx.rect(room.x, room.y, room.w, room.h);
+            fogCtx.clip();
+            const dist = 2000;
+            const d1 = Math.hypot(e1.x - px, e1.y - py) || 1;
+            const d2 = Math.hypot(e2.x - px, e2.y - py) || 1;
+            fogCtx.beginPath();
+            fogCtx.moveTo(px, py);
+            fogCtx.lineTo(px + (e1.x-px)/d1*dist, py + (e1.y-py)/d1*dist);
+            fogCtx.lineTo(px + (e2.x-px)/d2*dist, py + (e2.y-py)/d2*dist);
+            fogCtx.closePath();
+            fogCtx.fill();
+            fogCtx.restore();
+          }
 
-        // Flashlights shine into adjacent room through doorway regardless of its light state
-        drawFlashlightInRoom(room);
-        drawUVFlashlightInRoom(room);
-      });
+          drawFlashlightInRoom(room);
+          drawUVFlashlightInRoom(room);
+        });
+      }
 
       // Outside roof-reveal: soft fade circle matching the sight falloff style
-      // Only when front door is CLOSED (open door shows interior through wedge instead)
       const frontDoor = doors.find(d => d.label === "Front Door");
-      if (playerOutside && frontDoor && !frontDoor.open) {
+      if (playerOutside) {
         // Radial gradient: fully clear at center → transparent at edge (same feel as sight range)
         const roofGrad = fogCtx.createRadialGradient(px, py, 60, px, py, 200);
         roofGrad.addColorStop(0,   "rgba(0,0,0,1)");   // full clear at center
@@ -5527,6 +5628,8 @@
         fogCtx.arc(px, py, 200, 0, Math.PI * 2);
         fogCtx.fill();
       }
+
+      // Inside/outside are fully separated — no cross-visibility through door
 
       fogCtx.restore();
       fogCtx.globalCompositeOperation = "source-over"; // reset composite mode
@@ -5549,6 +5652,27 @@
 
       // Stamp the fog layer onto the main canvas
       ctx.drawImage(fogCanvas, 0, 0);
+
+      // ── DOOR TRANSITION FADE ─────────────────────────────────────────────
+      if (_transDir !== 0) {
+        const FADE_SPEED = 0.03;
+        if (_transDir === 1) {
+          // Fading to black
+          _transAlpha = Math.min(1, _transAlpha + FADE_SPEED);
+          if (_transAlpha >= 1) {
+            _transLockedSide = _rawOutside; // switch view at peak black
+            _transDir = -1;
+          }
+        } else {
+          // Fading back in
+          _transAlpha = Math.max(0, _transAlpha - FADE_SPEED);
+          if (_transAlpha <= 0) _transDir = 0; // done
+        }
+        if (_transAlpha > 0) {
+          ctx.fillStyle = `rgba(0,0,0,${_transAlpha})`;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+      }
 
       // Camera viewfinder overlay: cone boundary lines + NV green tint inside cone
       // ZOOM passed explicitly — it's a local const in draw(), not a global
@@ -6045,18 +6169,6 @@
         ctx.restore();
       }
 
-      // ── Sanity HUD — small indicator, top-left ─────────────────────────
-      if (playerSanity < 100) {
-        ctx.save();
-        const sanityColor = playerSanity > 60 ? "#8ad0a0" : playerSanity > 30 ? "#e0c060" : "#e06040";
-        ctx.fillStyle = "rgba(0,0,0,0.55)";
-        ctx.fillRect(10, 10, 90, 14);
-        ctx.fillStyle = sanityColor;
-        ctx.font = "9px monospace";
-        ctx.textAlign = "left";
-        ctx.fillText(`Sanity: ${playerSanity}%`, 14, 21);
-        ctx.restore();
-      }
 
       // ── Music Box active overlay ───────────────────────────────────────
       if (musicBoxActive && currentGhost) {
@@ -6150,6 +6262,23 @@
           ctx.textAlign = "left";
         }
         ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+
+      // ── Active hunt — pulsing red border + warning text ──────────────────
+      if (ghostHunting) {
+        const bp = 0.18 + 0.12 * Math.sin(huntBlinkT * Math.PI * 3); // pulse 3×/s
+        ctx.save();
+        ctx.strokeStyle = "#cc0000";
+        ctx.lineWidth = 6;
+        ctx.globalAlpha = bp;
+        ctx.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
+        ctx.globalAlpha = bp * 1.5;
+        ctx.fillStyle = "#ff4444";
+        ctx.font = "bold 13px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("! HUNTING !", canvas.width / 2, 18);
+        ctx.textAlign = "left";
         ctx.restore();
       }
 
@@ -9329,11 +9458,11 @@
     }
 
     // ── drawMenuTitle: haunted identity / start screen ────────────────────────
-    function drawIntro() {
+    function drawIntro(dt) {
       const W = canvas.width, H = canvas.height;
 
-      // Advance phase timer
-      _introT += 1 / 60; // ~60fps assumption; good enough for a simple fade
+      // Advance phase timer using real delta time
+      _introT += (dt || 1/60);
       const dur = INTRO_DUR[_introPhase] || 0.6;
 
       // Compute alpha for current phase
@@ -9774,7 +9903,7 @@
       ctx.textAlign = "center";
       ctx.fillStyle = "#e57373";
       ctx.font = "bold 28px monospace";
-      ctx.fillText("Time's up. You didn't make it out.", 400, 220);
+      ctx.fillText("The ghost got you.", 400, 220);
 
       ctx.font = "18px monospace";
       ctx.fillStyle = "#aaa";
@@ -10160,16 +10289,18 @@
         playerSanity = Math.max(0, playerSanity - 25);
 
       } else if (pin.effect === 'hunt') {
-        // Heart pin: hunt trigger — red flash, ghost teleports to player's room, appears
-        ghostHuntFlash  = 1.5;
-        ghostAppearTimer = 3.0;
+        // Heart pin: immediately triggers a real hunt
         const pRoom = _roomAtPoint(player.x + 8, player.y + 8);
         if (pRoom && currentGhost) {
           ghostX = Math.min(Math.max(player.x + 55, pRoom.x + 12), pRoom.x + pRoom.w - 12);
           ghostY = Math.min(Math.max(player.y + 55, pRoom.y + 12), pRoom.y + pRoom.h - 12);
           ghostTargetX = ghostX; ghostTargetY = ghostY;
         }
-        ghostEventTimer = 0.3;
+        ghostHunting    = true;
+        huntDuration    = 25;
+        ghostHuntFlash  = 1.5;
+        ghostAppearTimer = huntDuration + 2;
+        huntCooldown    = 0;
         emfSources.push({ x: ghostX, y: ghostY, level: 5, timer: 16 });
         if (emfSources.length > 6) emfSources.shift();
 
@@ -10222,8 +10353,11 @@
           break;
         case "hunt":
           // The Reaper — cursed hunt
-          ghostHuntFlash = 1.5;
-          ghostAppearTimer = 3.0;
+          ghostHunting    = true;
+          huntDuration    = 25;
+          ghostHuntFlash  = 1.5;
+          ghostAppearTimer = huntDuration + 2;
+          huntCooldown    = 0;
           emfSources.push({ x: ghostX, y: ghostY, level: 5, timer: 16 });
           break;
         case "watcher":
@@ -10247,10 +10381,13 @@
           playerSanity = Math.min(100, playerSanity + 50);
           break;
         case "death":
-          // The Noose — instant lose condition (trigger hunt immediately and max flash)
-          ghostHuntFlash = 1.5;
-          ghostAppearTimer = 3.5;
-          playerSanity = 0;
+          // The Noose — instant lose condition
+          playerSanity    = 0;
+          ghostHunting    = true;
+          huntDuration    = 40;
+          ghostHuntFlash  = 1.5;
+          ghostAppearTimer = huntDuration + 2;
+          huntCooldown    = 0;
           emfSources.push({ x: ghostX, y: ghostY, level: 5, timer: 18 });
           break;
       }
@@ -12715,8 +12852,11 @@
     window.chartest = function() { menuPhase = "chartest"; };
 
     // --- Game Loop ---
-    function loop() {
-      if (menuPhase === "intro")      { drawIntro(); }
+    let _loopLast = 0;
+    function loop(ts) {
+      const _loopDt = Math.min((ts - _loopLast) / 1000, 0.05);
+      _loopLast = ts;
+      if (menuPhase === "intro")      { drawIntro(_loopDt); }
       else if (menuPhase === "chartest")  { updateCharTest(); drawCharTest(); }
       else if (menuPhase === "profile")    { drawMenuProfile(); }
       else if (menuPhase === "title")      { drawMenuTitle(); }
@@ -12771,9 +12911,7 @@
     if (CHAR_TEST_MODE) menuPhase = "chartest";
     // ─────────────────────────────────────────────────────────────────────
 
-    // DEV: skip straight to game — remove showGame() call to restore normal startup
-    showGame();
-    // Start the loop — profile screen first, then title after login
+    // Start the loop — intro → profile → title → corkboard
     loopRunning = true;
     loop();
   </script>

@@ -124,7 +124,7 @@
 - [x] Music Box break behavior: shatters into 2 inert floor pieces on hunt trigger, removed from hand
 - [x] Tarot Cards functionality: R opens popup, E draws one card, 10-card shuffled deck, card art only, burn effect, 10 effects mapped
 - [x] Pre-game lobby: warehouse staging area, van parked inside, corkboard start station, E/click to begin round
-- [ ] Ghost hunt mode (chases player, causes lose condition)
+- [x] Ghost hunt mode: sanity drains over time; hunt triggers below threshold; ghost chases at huntSpeedLOS; catch = lostRound; Crucifix blocks hunt; Incense ends hunt early; blink/solid/stealth visibility per ghost type; red border + "! HUNTING !" HUD; music box/tarot/voodoo trigger real hunts; Ultimate Ghost removed
 - [ ] Tilemap / multi-room map
 
 ## Done

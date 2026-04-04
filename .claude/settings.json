@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Bash(*)",
       "Read(//Users/cashcrunk/my-game/**)",
       "Bash(grep -n \"function _drawPageShop\\\\|// ── Truck loadout monitor\\\\|// Monitor fills\\\\|// Outer bezel\\\\|\\\\/\\\\/ ── Header bar ──\\\\|\\\\/\\\\/ ── Layout: left nav\\\\|\\\\/\\\\/ ── Content pane\\\\|\\\\/\\\\/ ── Footer bar\\\\|ctx.textAlign = .left.;$\" /Users/cashcrunk/my-game/index.html)",
       "Read(//tmp/**)",
