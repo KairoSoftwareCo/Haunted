@@ -177,8 +177,10 @@
     const pipFogCtx = pipFogCanvas.getContext("2d");
 
     // --- Debug ---
-    const DEBUG_COLLISION = false; // set true to show collision overlay
-    const DEBUG_GHOST     = false; // set true to enable ghost console logging
+    const DEBUG_COLLISION      = false; // set true to show collision overlay
+    const DEBUG_GHOST          = false; // set true to enable ghost console logging
+    let   DEBUG_GHOST_BEHAVIOR = true;  // set false to hide ghost debug HUD
+    let   _dbgLastEmfLevel     = 0;     // last EMF level fired this round (debug)
 
 
     // --- Shared behavior defaults (per-ghost overrides win) ---
@@ -187,8 +189,8 @@
       roamTendency:        1.0,   // how far/often ghost wanders
       roomLoyalty:         0.5,   // 0=roams freely, 1=stays near fav room
       huntThreshold:       50,    // sanity% at which hunts begin
-      huntSpeedBase:       1.4,   // px/frame during hunt (not chasing)
-      huntSpeedLOS:        2.4,   // px/frame when ghost has LOS on player
+      huntSpeedBase:       1.0,   // roam speed multiplier × player.speed (1.0 = matches player)
+      huntSpeedLOS:        1.4,   // chase speed multiplier × player.speed
       lightInteraction:    "off", // "off"|"on"|"flicker" — preferred light state
       doorInteraction:     0.5,   // 0–1 chance to interact with nearby door
       electronicsAttraction: 0.5, // 0–1 bias toward active electronics
@@ -197,6 +199,10 @@
       incenseDuration:     90,    // seconds smudge keeps it pacified
       crucifixRange:       3,     // metres (game units)
       evidenceFrequency:   1.0,   // multiplier on how often evidence fires
+      roamDurMin:          5,     // min seconds per roam trip
+      roamDurMax:          60,    // max seconds per roam trip
+      homeDurMin:          10,    // min seconds resting at home between roams
+      homeDurMax:          40,    // max seconds resting at home between roams
     };
 
     // --- Screen state ---
@@ -304,6 +310,9 @@
     let ghostAppearTimer = 0;       // > 0: show ghost in gray translucent form in world
     let ghostHuntFlash   = 0;       // > 0: red hunt-flash screen overlay fading from 1.5→0
     let ghostHunting     = false;   // true while ghost is actively chasing player
+    let huntWarning      = false;   // true during 2.5s stalking phase before chase begins
+    let huntWarningTimer = 0;       // counts down from 2.5 during warning phase
+    let huntLostSightTimer = 0;     // > 0: player out of range; counts down to hunt end
     let huntDuration     = 0;       // seconds remaining in current hunt
     let huntCooldown     = 0;       // seconds until ghost can hunt again
     let huntBlinkT       = 0;       // flicker timer for ghost visibility during hunt
@@ -539,7 +548,17 @@
     let ghostMoveAngle = 0;            // direction ghost is facing (radians)
     let ghostPauseTimer = 0;           // seconds remaining in current pause at waypoint
     let ghostWalkCycle  = 0;           // leg swing accumulator (like player walkCycle)
-    let ghostFavRoom = null;           // {x,y,w,h} — ghost's favorite room
+    let ghostFavRoom  = null;          // current target room (home or temporary roam room)
+    let ghostHomeRoom = null;          // true favourite — set once per round, never changes
+    let ghostRoamTimer      = 0;      // > 0: currently roaming away from home; counts down
+    let ghostHomeTimer      = 0;      // > 0: resting at home before next roam; counts down
+    let ghostAttractTimer   = 0;      // > 0: ghost pulled toward player's room; overrides roam/home
+    let ghostAttractCooldown = 0;     // > 0: blocks new attraction triggers
+    let ghostPath          = [];    // BFS room waypoints toward ghostFavRoom: [room, …]
+    let ghostPathIdx       = 0;     // next step index in ghostPath
+    let _ghostPrevFavRoom  = null;  // change detector — rebuild path when fav room changes
+    let ghostLastKnownRoom = null;  // player's room at last confirmed hunt sighting
+    let ghostLastHeardRoom = null;  // room of last heard noise — ghost investigates
     let ghostEventTimer = 0;           // countdown (seconds) to next interaction attempt
     let ghostAction      = "idle";      // current ghost action — used by evidence system
     let ghostActionTimer = 0;          // countdown (seconds) to next action decision
@@ -718,7 +737,12 @@
       voodooPinUsed = [false,false,false,false,false]; voodooDollOpen = false;
       voodooAnimPinId = -1; voodooAnimT = 0; voodooEffectFired = false; voodooPostT = 0;
       voodooSpent = false; ghostAppearTimer = 0; ghostHuntFlash = 0; playerSanity = 100;
-      ghostHunting = false; huntDuration = 0; huntCooldown = 0; huntBlinkT = 0; incensePacified = 0;
+      ghostHunting = false; huntWarning = false; huntWarningTimer = 0; huntLostSightTimer = 0;
+      huntDuration = 0; huntCooldown = 0; huntBlinkT = 0; incensePacified = 0;
+      ghostHomeRoom = null; ghostRoamTimer = 0; ghostHomeTimer = 0;
+      ghostAttractTimer = 0; ghostAttractCooldown = 0; _dbgLastEmfLevel = 0;
+      ghostPath = []; ghostPathIdx = 0; _ghostPrevFavRoom = null;
+      ghostLastKnownRoom = null; ghostLastHeardRoom = null;
       musicBoxActive = false; musicBoxTimer = 0; musicBoxBroken = false; musicBoxPulseT = 0;
       // Build shuffled tarot deck
       tarotOpen = false; tarotDrawnCard = null; tarotRevealT = 0; tarotBurnT = 0;
@@ -891,7 +915,14 @@
         const playerInDoor = player.x + player.width  > nearD.x && player.x < nearD.x + nearD.w &&
                              player.y + player.height > nearD.y && player.y < nearD.y + nearD.h;
         if (nearD.open && playerInDoor) { /* blocked */ }
-        else nearD.open = !nearD.open;
+        else {
+          // Door opening noise — ghost investigates if safe time is over
+          if (!nearD.open && safeTimeOver && !ghostHunting) {
+            const dRoom = _roomAtPoint(nearD.x + nearD.w/2, nearD.y + nearD.h/2);
+            if (dRoom) ghostLastHeardRoom = dRoom;
+          }
+          nearD.open = !nearD.open;
+        }
       }
 
       // Van door — within 44px AND facing (allowed in lobby too — van is open/enterable)
@@ -1048,6 +1079,31 @@
         if ((e.key === "Enter" || e.key === " ") && _corkboardPage === 2) { e.preventDefault(); _startGame(); }
         return;
       }
+      // ── Debug: [ / ] cycle through test ghosts; \ toggles HUD ─────────────
+      if (DEBUG_GHOST_BEHAVIOR && gameRunning && currentGhost) {
+        const TEST_GHOSTS = ["Demon", "Shade", "Jinn", "Poltergeist", "Banshee"];
+        if (e.key === "[" || e.key === "]") {
+          e.preventDefault();
+          const cur = TEST_GHOSTS.indexOf(currentGhost.name);
+          const next = (cur + (e.key === "]" ? 1 : -1) + TEST_GHOSTS.length) % TEST_GHOSTS.length;
+          const found = GHOST_REGISTRY.find(g => g.name === TEST_GHOSTS[next]);
+          if (found) {
+            currentGhost    = found;
+            ghostRoamTimer  = 0;
+            ghostHomeTimer  = 2; // short pause before first roam with new ghost
+            ghostAttractTimer    = 0;
+            ghostAttractCooldown = 0;
+            _dbgLastEmfLevel = 0;
+            console.log(`[DEBUG] Ghost forced → ${found.name}`);
+          }
+          return;
+        }
+        if (e.key === "\\") {
+          DEBUG_GHOST_BEHAVIOR = !DEBUG_GHOST_BEHAVIOR;
+          return;
+        }
+      }
+
       // Rebind intercept — if waiting for a new key, capture it now
       if (rebindingAction !== null) {
         if (e.key !== "Escape") {
@@ -1341,6 +1397,22 @@
       ...rooms.map(r    => ({ x:r.x+3, y:r.y+3, width:r.w-6, height:r.h-6 })),
       ...doorways.map(d => ({ x:d.x,   y:d.y,   width:d.w,   height:d.h   })),
     ];
+
+    // Room adjacency graph for ghost BFS pathfinding.
+    // Two rooms are neighbours if a doorway rect overlaps both of them.
+    const roomGraph = new Map();
+    for (const r of rooms) roomGraph.set(r, new Set());
+    for (const dw of doorways) {
+      const linked = rooms.filter(r =>
+        dw.x < r.x + r.w && dw.x + dw.w > r.x &&
+        dw.y < r.y + r.h && dw.y + dw.h > r.y
+      );
+      for (let i = 0; i < linked.length; i++)
+        for (let j = i + 1; j < linked.length; j++) {
+          roomGraph.get(linked[i]).add(linked[j]);
+          roomGraph.get(linked[j]).add(linked[i]);
+        }
+    }
 
     // Furniture — valid surfaces for camera placement (not the floor)
     // Each entry: { x, y, w, h, label, style? }
@@ -1672,7 +1744,7 @@
         clue2: "Fingerprints found on a surface no one touched.",
         evidence: ["Spirit Box", "Ghost Writing", "Ultraviolet"],
         notes: "Throws objects frequently. Most dangerous in crowded rooms.",
-        behavior: { throwTendency: 1.0, activityRate: 1.3 },
+        behavior: { throwTendency: 1.0, activityRate: 1.3, huntSpeedBase: 1.0, huntSpeedLOS: 1.3, roamDurMin: 15, roamDurMax: 40, homeDurMin: 10, homeDurMax: 25 },
         specialRules: ["mass_throw_sanity_drain", "stronger_in_crowded_rooms"],
       },
       {
@@ -1681,7 +1753,7 @@
         clue2: "An orb drifts through the dark.",
         evidence: ["D.O.T.S. Projector", "Ghost Orb", "Ultraviolet"],
         notes: "Targets one person only. Sings while roaming. Crucifix fully stops its hunt.",
-        behavior: { crucifixRange: 5 },
+        behavior: { crucifixRange: 5, huntSpeedBase: 1.0, huntSpeedLOS: 1.45, roamDurMin: 20, roamDurMax: 50, homeDurMin: 10, homeDurMax: 25 },
         specialRules: ["single_target", "wail_on_roam", "crucifix_always_works"],
       },
       {
@@ -1690,7 +1762,7 @@
         clue2: "Fingerprints found on a surface no one touched.",
         evidence: ["EMF Level 5", "Freezing Temperatures", "Ultraviolet"],
         notes: "Much faster when lights are on and prey is distant. Cut the power.",
-        behavior: { huntSpeedLOS: 3.2, lightInteraction: "on" },
+        behavior: { huntSpeedBase: 1.0, huntSpeedLOS: 1.7, lightInteraction: "on", roamDurMin: 20, roamDurMax: 50, homeDurMin: 8, homeDurMax: 20 },
         specialRules: ["speed_boost_lights_on", "cant_turn_off_breaker"],
       },
       {
@@ -1708,7 +1780,7 @@
         clue2: "An orb drifts through the dark.",
         evidence: ["Ghost Writing", "Freezing Temperatures", "Ghost Orb"],
         notes: "Slow when unaware. Blindingly fast once it spots you. Hide immediately.",
-        behavior: { huntSpeedBase: 0.6, huntSpeedLOS: 3.5 },
+        behavior: { huntSpeedBase: 0.4, huntSpeedLOS: 2.1 },
         specialRules: ["speed_jumps_on_los"],
       },
       {
@@ -1717,7 +1789,7 @@
         clue2: "Ghost Book fills on its own.",
         evidence: ["EMF Level 5", "Ghost Writing", "Freezing Temperatures"],
         notes: "Shy — rarely appears when others are nearby. Hard to provoke into a hunt.",
-        behavior: { huntThreshold: 35, activityRate: 0.6, roomLoyalty: 0.7 },
+        behavior: { huntThreshold: 35, activityRate: 0.6, roomLoyalty: 0.7, huntSpeedBase: 0.8, huntSpeedLOS: 1.1, roamDurMin: 10, roamDurMax: 30, homeDurMin: 30, homeDurMax: 60 },
         specialRules: ["no_hunt_when_group", "shy_activity"],
       },
       {
@@ -1726,7 +1798,7 @@
         clue2: "Fingerprints found on a surface no one touched.",
         evidence: ["Ghost Writing", "Freezing Temperatures", "Ultraviolet"],
         notes: "Hunts more often than any ghost. Ouija board is safe to use on a Demon.",
-        behavior: { huntThreshold: 70, activityRate: 1.5, crucifixRange: 5 },
+        behavior: { huntThreshold: 70, activityRate: 1.5, crucifixRange: 5, huntSpeedBase: 1.1, huntSpeedLOS: 1.5, roamDurMin: 30, roamDurMax: 60, homeDurMin: 5, homeDurMax: 15 },
         specialRules: ["hunt_any_sanity", "ouija_safe", "frequent_hunts"],
       },
       {
@@ -1762,7 +1834,7 @@
         clue2: "An orb drifts through the dark.",
         evidence: ["Freezing Temperatures", "Ghost Orb", "Ultraviolet"],
         notes: "Faster in cold rooms, slower in warm ones. Never produces EMF 5.",
-        behavior: { huntSpeedBase: 1.0 },
+        behavior: { huntSpeedBase: 1.0, huntSpeedLOS: 1.5 },
         specialRules: ["speed_from_cold", "no_emf5"],
       },
       {
@@ -1807,7 +1879,7 @@
         clue2: "An orb drifts through the dark.",
         evidence: ["EMF Level 5", "D.O.T.S. Projector", "Ghost Orb"],
         notes: "Faster near active electronics. Put down equipment to slow its hunt.",
-        behavior: { electronicsAttraction: 1.0, huntSpeedLOS: 3.0 },
+        behavior: { electronicsAttraction: 1.0, huntSpeedLOS: 1.7 },
         specialRules: ["speed_near_electronics", "disrupts_electronics"],
       },
       {
@@ -1836,7 +1908,7 @@
         clue2: "Ghost Book fills on its own.",
         evidence: ["Spirit Box", "Ghost Writing", "Freezing Temperatures"],
         notes: "Curses players through Spirit Box. Faster the lower your sanity drops.",
-        behavior: { huntSpeedBase: 1.2, huntSpeedLOS: 2.8 },
+        behavior: { huntSpeedBase: 1.0, huntSpeedLOS: 1.65 },
         specialRules: ["spirit_box_curse", "speed_scales_with_low_sanity"],
       },
       {
@@ -1845,7 +1917,7 @@
         clue2: "Ghost Book fills on its own.",
         evidence: ["Spirit Box", "Ghost Writing", "D.O.T.S. Projector"],
         notes: "Always knows where you are — never hide. Walk away slowly; it can't corner you.",
-        behavior: { huntSpeedBase: 3.0, huntSpeedLOS: 0.4 },
+        behavior: { huntSpeedBase: 1.8, huntSpeedLOS: 0.25 },
         specialRules: ["always_knows_player_pos", "slows_near_target"],
       },
       {
@@ -1944,7 +2016,12 @@
 
       {
         const interior = rooms.filter(r => r.w >= 80 && r.h >= 80 && r.w < 400 && r.h < 400);
-        ghostFavRoom = interior[Math.floor(Math.random() * interior.length)] || rooms[0];
+        ghostHomeRoom = interior[Math.floor(Math.random() * interior.length)] || rooms[0];
+        ghostFavRoom  = ghostHomeRoom;
+        ghostRoamTimer  = 0;
+        const startBeh = getGhostBehavior(currentGhost);
+        // Start at home for one full home-rest period before first roam
+        ghostHomeTimer = startBeh.homeDurMin + Math.random() * (startBeh.homeDurMax - startBeh.homeDurMin);
       }
 
       ghostX = ghostFavRoom.x + ghostFavRoom.w / 2;
@@ -2539,7 +2616,7 @@
         if (musicBoxTimer >= MUSIC_BOX_HUNT_DELAY) {
           // Trigger hunt and shatter the box
           _breakMusicBox();
-          ghostHunting    = true;
+          ghostHunting = true; huntWarning = false; huntLostSightTimer = 0;
           huntDuration    = 30;
           ghostHuntFlash  = 1.5;
           ghostAppearTimer = huntDuration + 2;
@@ -2605,12 +2682,37 @@
         // Goryo (no_room_migration) stays in its favorite room; others roam freely
         const ghostConfine = currentGhost?.specialRules?.includes("no_room_migration") ? ghostFavRoom : null;
 
-        // Helper: pick a new walkable waypoint inside the room
+        // BFS room path from ghost's current position to targetRoom.
+        // Returns ordered array of rooms to visit (excludes start, includes target).
+        function ghostPathTo(targetRoom) {
+          const start = _roomAtPoint(ghostX, ghostY) || ghostFavRoom;
+          if (!start || !targetRoom || start === targetRoom) return [];
+          const queue = [[start]];
+          const visited = new Set([start]);
+          while (queue.length) {
+            const cur_path = queue.shift();
+            const cur = cur_path[cur_path.length - 1];
+            for (const nbr of (roomGraph.get(cur) || [])) {
+              if (nbr === targetRoom) return cur_path.slice(1).concat([nbr]);
+              if (!visited.has(nbr)) { visited.add(nbr); queue.push([...cur_path, nbr]); }
+            }
+          }
+          return [targetRoom]; // unreachable fallback — head there directly
+        }
+
+        // Pick next movement waypoint.
+        // If a BFS path is active, aim for the next room's centre; otherwise wander in ghostFavRoom.
         function pickGhostTarget() {
-          const margin = GHOST_SIZE; // keep well clear of walls
+          if (ghostPath.length > 0 && ghostPathIdx < ghostPath.length) {
+            const wr = ghostPath[ghostPathIdx];
+            ghostTargetX = wr.x + wr.w / 2;
+            ghostTargetY = wr.y + wr.h / 2;
+            return;
+          }
+          // Arrived — wander randomly inside ghostFavRoom
+          const margin = GHOST_SIZE;
           ghostTargetX = ghostFavRoom.x + margin + Math.random() * (ghostFavRoom.w - margin * 2);
           ghostTargetY = ghostFavRoom.y + margin + Math.random() * (ghostFavRoom.h - margin * 2);
-          // If the picked spot is itself invalid, fall back to room center
           if (!canGhostMoveTo(ghostTargetX, ghostTargetY, ghostConfine)) {
             ghostTargetX = ghostFavRoom.x + ghostFavRoom.w / 2;
             ghostTargetY = ghostFavRoom.y + ghostFavRoom.h / 2;
@@ -2629,40 +2731,86 @@
         const pcx = player.x + 8, pcy = player.y + 8;
         const distToPlayer = Math.hypot(ghostX - pcx, ghostY - pcy);
 
-        if (ghostHunting) {
-          // Check if incense stops the hunt
+        // ── Hunt warning phase (stalking) ───────────────────────────────────
+        if (huntWarning) {
+          huntWarningTimer -= delta;
+          huntBlinkT += delta;
+          // Ghost drifts toward player during warning but doesn't chase at full speed
+          const wSpeed = beh.huntSpeedBase * player.speed;
+          const wdx = pcx - ghostX, wdy = pcy - ghostY;
+          const wd  = Math.hypot(wdx, wdy);
+          if (wd > 4) {
+            const step = Math.min(wSpeed, wd);
+            const nx = ghostX + (wdx / wd) * step;
+            const ny = ghostY + (wdy / wd) * step;
+            ghostMoveAngle = Math.atan2(wdy, wdx);
+            if      (canGhostMoveTo(nx,     ny,     null)) { ghostX = nx; ghostY = ny; }
+            else if (canGhostMoveTo(nx,     ghostY, null)) { ghostX = nx; }
+            else if (canGhostMoveTo(ghostX, ny,     null)) { ghostY = ny; }
+            ghostWalkCycle += 0.12;
+            _ghostSpriteTimer++;
+            if (_ghostSpriteTimer >= SPRITE_FRAME_SPEED) { _ghostSpriteTimer = 0; _ghostSpriteFrame = (_ghostSpriteFrame + 1) % 6; }
+          }
+          if (huntWarningTimer <= 0) {
+            // Warning over — begin actual chase
+            huntWarning  = false;
+            ghostHunting = true;
+            huntDuration = 25 + Math.random() * 10;
+            ghostAppearTimer = huntDuration + 2;
+          }
+        } else if (ghostHunting) {
+          // ── Active chase ───────────────────────────────────────────────────
+          // Incense check
           const incenseInRange = worldItems.some(it =>
             it.name === "Incense" && it.active &&
             Math.hypot(it.x + 6 - ghostX, it.y + 6 - ghostY) < 120
           ) || (inventory[selectedSlot] === "Incense" && heldItemOn && distToPlayer < 120);
           if (incenseInRange && incensePacified <= 0) {
-            incensePacified = 90; // pacified for 90s
-            ghostHunting = false;
-            huntCooldown = 30;
-            ghostHuntFlash = 0;
+            incensePacified = 90;
+            ghostHunting = false; huntWarning = false;
+            huntCooldown = 30; ghostHuntFlash = 0; huntLostSightTimer = 0;
           }
 
-          // Check if placed crucifix blocks the hunt
-          const crucifixRangePx = beh.crucifixRange * 48; // 3 "metres" in game px
+          // Crucifix check
+          const crucifixRangePx = beh.crucifixRange * 48;
           const crucifixNearby = worldItems.some(it =>
             it.name === "Crucifix" &&
             Math.hypot(it.x + 6 - ghostX, it.y + 6 - ghostY) < crucifixRangePx
           );
           if (crucifixNearby) {
-            ghostHunting = false;
-            huntCooldown = 25;
-            ghostHuntFlash = 0;
+            ghostHunting = false; huntWarning = false;
+            huntCooldown = 25; ghostHuntFlash = 0; huntLostSightTimer = 0;
+          }
+
+          // LOS loss — player > 350px away for 5s ends the hunt
+          if (distToPlayer > 350) {
+            huntLostSightTimer += delta;
+            if (huntLostSightTimer >= 5) {
+              ghostHunting = false; huntWarning = false;
+              huntCooldown = 15 + Math.random() * 10;
+              ghostHuntFlash = 0; huntLostSightTimer = 0;
+              // Post-hunt: investigate last known location
+              if (ghostLastKnownRoom) { ghostFavRoom = ghostLastKnownRoom; ghostRoamTimer = 15 + Math.random() * 10; ghostHomeTimer = 0; }
+              if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:${currentGhost.name}] HUNT END — lost sight; searching ${ghostLastKnownRoom?.label}`);
+            }
+          } else {
+            huntLostSightTimer = 0;
+            // In LOS — update last known player room
+            const lkRoom = _roomAtPoint(pcx, pcy);
+            if (lkRoom) ghostLastKnownRoom = lkRoom;
           }
 
           huntDuration -= delta;
           if (huntDuration <= 0) {
-            // Hunt expires — ghost returns to roaming
-            ghostHunting = false;
+            ghostHunting = false; huntWarning = false;
             huntCooldown = 20 + Math.random() * 15;
-            ghostHuntFlash = 0;
-          } else {
-            // Chase player — move at hunt speed toward player
-            const hSpeed = beh.huntSpeedLOS;
+            ghostHuntFlash = 0; huntLostSightTimer = 0;
+            // Post-hunt: investigate last known location
+            if (ghostLastKnownRoom) { ghostFavRoom = ghostLastKnownRoom; ghostRoamTimer = 15 + Math.random() * 10; ghostHomeTimer = 0; }
+            if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:${currentGhost.name}] HUNT END — timeout; searching ${ghostLastKnownRoom?.label}`);
+          } else if (ghostHunting) {
+            // Chase toward player at hunt speed (multiplier × player base speed)
+            const hSpeed = beh.huntSpeedLOS * player.speed;
             const hdx = pcx - ghostX, hdy = pcy - ghostY;
             const hd  = Math.hypot(hdx, hdy);
             if (hd > 2) {
@@ -2677,32 +2825,178 @@
               _ghostSpriteTimer++;
               if (_ghostSpriteTimer >= SPRITE_FRAME_SPEED) { _ghostSpriteTimer = 0; _ghostSpriteFrame = (_ghostSpriteFrame + 1) % 6; }
             }
-            // Drain sanity faster during hunt
             playerSanity = Math.max(0, playerSanity - delta * 6);
-
-            // Catch player — within 18px = caught
+            // Catch — 18px
             if (Math.hypot(ghostX - pcx, ghostY - pcy) < 18) {
-              ghostHunting = false;
-              gameRunning  = false;
-              lostRound    = true;
+              ghostHunting = false; huntWarning = false;
+              gameRunning  = false; lostRound   = true;
             }
           }
         } else {
-          // Not hunting — check whether to start a hunt
+          // Not hunting — check whether to start a hunt (range-gated)
           const canHunt = safeTimeOver && huntCooldown <= 0 && incensePacified <= 0
-                          && playerSanity <= beh.huntThreshold && !roundOver;
-          if (canHunt) {
-            // Roll once per second (approx): ~30% base chance when sanity below threshold
+                          && playerSanity <= beh.huntThreshold && !roundOver && !huntWarning;
+          if (canHunt && distToPlayer <= 400) {
+            // ~30% per second roll
             if (Math.random() < delta * 0.3) {
-              ghostHunting    = true;
-              huntDuration    = 25 + Math.random() * 10; // 25–35s hunt
-              ghostHuntFlash  = 1.5;
-              ghostAppearTimer = huntDuration + 2; // ghost visible during hunt
+              huntWarning      = true;
+              huntWarningTimer = 2.5;
+              ghostHuntFlash   = 1.5;  // red flash plays during warning
+              ghostAppearTimer = 4;    // ghost visible through warning + start of chase
+              huntLostSightTimer = 0;
+              if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:${currentGhost.name}] HUNT WARNING — stalking player`);
             }
           }
 
-          // Normal roaming movement
-          const GHOST_SPEED = beh.huntSpeedBase;
+          // ── Tool attraction system ───────────────────────────────────────
+          // Check if player's active tool should pull the ghost to their room.
+          // Gated on safeTimeOver; 30s cooldown between triggers.
+          if (ghostAttractCooldown > 0) ghostAttractCooldown -= delta;
+          if (ghostAttractTimer    > 0) ghostAttractTimer    -= delta;
+
+          if (safeTimeOver && ghostAttractCooldown <= 0 && ghostHomeRoom && !ghostHunting) {
+            const heldTool   = inventory[selectedSlot];
+            const pRoom      = _roomAtPoint(player.x + 8, player.y + 8);
+            const ev         = currentGhost.evidence;
+            let triggered    = false;
+
+            // EMF Reader held + active EMF source in range → 60% pull
+            if (!triggered && heldTool === "EMF Reader" && emfSources.length > 0) {
+              const px = player.x + 8, py = player.y + 8;
+              const hasNearby = emfSources.some(s => Math.hypot(px - s.x, py - s.y) < 120);
+              if (hasNearby && Math.random() < 0.60) triggered = true;
+            }
+
+            // Thermometer held + ghost has Freezing Temperatures + room is cold → pull
+            if (!triggered && heldTool === "Thermometer" &&
+                ev.includes("Freezing Temperatures") && thermometerReading < 5) {
+              triggered = true;
+            }
+
+            // D.O.T.S. Projector active in player's room → pull ghost there
+            if (!triggered && pRoom) {
+              const dotsInRoom = worldItems.some(it =>
+                it.name === "D.O.T.S. Projector" && it.active &&
+                it.x >= pRoom.x && it.x <= pRoom.x + pRoom.w &&
+                it.y >= pRoom.y && it.y <= pRoom.y + pRoom.h
+              );
+              if (dotsInRoom) triggered = true;
+            }
+
+            if (triggered && pRoom) {
+              ghostFavRoom        = pRoom;
+              ghostAttractTimer   = 10 + Math.random() * 10; // hold pull 10–20s
+              ghostAttractCooldown = 30;
+              // Cancel any in-progress roam so ghost heads toward player's room now
+              ghostRoamTimer = 0;
+              ghostHomeTimer = 0;
+            }
+          }
+
+          // While attraction is active, lock ghostFavRoom to player's room each tick
+          // (player may have moved rooms; keep following)
+          if (ghostAttractTimer > 0 && !ghostHunting) {
+            const pRoom = _roomAtPoint(player.x + 8, player.y + 8);
+            if (pRoom) ghostFavRoom = pRoom;
+          }
+
+          // ── Roam / home timer system ─────────────────────────────────────
+          // Goryo never leaves its home room
+          const canMigrate = !currentGhost?.specialRules?.includes("no_room_migration");
+          if (canMigrate && ghostHomeRoom && ghostAttractTimer <= 0) {
+            if (ghostRoamTimer > 0) {
+              // Currently roaming — count down
+              ghostRoamTimer -= delta;
+              if (ghostRoamTimer <= 0) {
+                // Roam expired — return home (70% immediate snap, 30% picks another room first)
+                if (Math.random() < 0.70) {
+                  ghostFavRoom  = ghostHomeRoom;
+                  if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:${currentGhost.name}] ROAM END → returning home (${ghostHomeRoom.label || "?"})`);
+                } else {
+                  // One extra hop to a random room before heading home
+                  const interior = rooms.filter(r => r.w >= 80 && r.h >= 80 && r.w < 400 && r.h < 400 && r !== ghostHomeRoom);
+                  ghostFavRoom = interior.length ? interior[Math.floor(Math.random() * interior.length)] : ghostHomeRoom;
+                  ghostRoamTimer = 5 + Math.random() * 8; // short extra hop
+                }
+                if (ghostRoamTimer <= 0) {
+                  ghostHomeTimer = beh.homeDurMin + Math.random() * (beh.homeDurMax - beh.homeDurMin);
+                }
+              }
+            } else if (ghostHomeTimer > 0) {
+              // Resting at home — count down
+              ghostHomeTimer -= delta;
+              if (ghostHomeTimer <= 0) {
+                // Time to roam — Banshee targets player's room; others pick random room
+                const isBanshee = currentGhost?.specialRules?.includes("single_target");
+                let roamRoom = null;
+                if (isBanshee) {
+                  roamRoom = _roomAtPoint(player.x + 8, player.y + 8) || null;
+                }
+                if (!roamRoom) {
+                  const interior = rooms.filter(r => r.w >= 80 && r.h >= 80 && r.w < 400 && r.h < 400 && r !== ghostHomeRoom);
+                  roamRoom = interior.length ? interior[Math.floor(Math.random() * interior.length)] : null;
+                }
+                if (roamRoom) {
+                  ghostFavRoom   = roamRoom;
+                  ghostRoamTimer = beh.roamDurMin + Math.random() * (beh.roamDurMax - beh.roamDurMin);
+                  if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:${currentGhost.name}] ROAM START → ${roamRoom.label || "?"} for ${ghostRoamTimer.toFixed(1)}s`);
+                  // Poltergeist: trigger a throw interaction at roam start
+                  if (currentGhost?.specialRules?.includes("mass_throw_sanity_drain")) {
+                    recordGhostActivity("interactNearby");
+                    const pLvl = 2 + Math.floor(Math.random() * 2);
+                    emfSources.push({ x: ghostX, y: ghostY, level: pLvl, timer: 8 });
+                    if (emfSources.length > 6) emfSources.shift();
+                    _dbgLastEmfLevel = pLvl;
+                    if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:Poltergeist] THROW EMF spike lvl=${pLvl}`);
+                  }
+                } else {
+                  ghostHomeTimer = 15 + Math.random() * 15;
+                }
+              }
+            } else {
+              // Both timers at 0 (init edge case) — start home rest
+              ghostHomeTimer = beh.homeDurMin + Math.random() * (beh.homeDurMax - beh.homeDurMin);
+            }
+          }
+
+          // ── Noise reaction ───────────────────────────────────────────────
+          // If the ghost heard something (door, Spirit Box) route there immediately.
+          if (ghostLastHeardRoom && ghostAttractTimer <= 0) {
+            ghostFavRoom       = ghostLastHeardRoom;
+            ghostLastHeardRoom = null;
+            ghostRoamTimer     = 10 + Math.random() * 10;
+            ghostHomeTimer     = 0;
+            if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:${currentGhost.name}] NOISE → ${ghostFavRoom.label}`);
+          }
+
+          // ── BFS path recompute when destination changes ──────────────────
+          if (ghostFavRoom !== _ghostPrevFavRoom) {
+            _ghostPrevFavRoom = ghostFavRoom;
+            ghostPath    = ghostPathTo(ghostFavRoom);
+            ghostPathIdx = 0;
+            if (DEBUG_GHOST_BEHAVIOR && ghostPath.length > 0)
+              console.log(`[Ghost:${currentGhost.name}] PATH → ${ghostPath.map(r => r.label).join(' → ')}`);
+            pickGhostTarget();
+          }
+
+          // Normal roaming movement — base speed is multiplier × player speed
+          let GHOST_SPEED = beh.huntSpeedBase * player.speed;
+
+          // Universal proximity boost: all ghosts move 25% faster within 300px of player
+          const dToPlayer = Math.hypot(ghostX - (player.x + 8), ghostY - (player.y + 8));
+          if (dToPlayer < 300) GHOST_SPEED *= 1.25;
+
+          // Jinn: additional lights-on speed boost when close (stacks with proximity boost)
+          if (currentGhost?.specialRules?.includes("speed_boost_lights_on") && housePowerOn) {
+            const litRoom = _roomAtPoint(ghostX, ghostY);
+            const litIdx  = litRoom ? rooms.indexOf(litRoom) : -1;
+            if (litIdx >= 0 && roomLights[litIdx]?.on && dToPlayer < 300) {
+              GHOST_SPEED = Math.min(beh.huntSpeedLOS * player.speed, GHOST_SPEED * 1.8);
+            }
+          }
+
+          // Cap roam speed so it never exceeds the ghost's own chase speed
+          GHOST_SPEED = Math.min(GHOST_SPEED, beh.huntSpeedLOS * player.speed);
           if (ghostPauseTimer > 0) {
             ghostPauseTimer -= delta;
           } else {
@@ -2710,8 +3004,14 @@
             const dy = ghostTargetY - ghostY;
             const dist = Math.hypot(dx, dy);
             if (dist < 3) {
-              ghostPauseTimer = 0.6 + Math.random() * 1.6;
-              pickGhostTarget();
+              // Travelling path — advance to next room, no pause between waypoints
+              if (ghostPath.length > 0 && ghostPathIdx < ghostPath.length) {
+                ghostPathIdx++;
+                pickGhostTarget();
+              } else {
+                ghostPauseTimer = 0.6 + Math.random() * 1.6;
+                pickGhostTarget();
+              }
             } else {
               const step = Math.min(GHOST_SPEED, dist);
               const nx = ghostX + (dx / dist) * step;
@@ -2720,7 +3020,19 @@
               if      (canGhostMoveTo(nx,     ny,     ghostConfine)) { ghostX = nx; ghostY = ny; }
               else if (canGhostMoveTo(nx,     ghostY, ghostConfine)) { ghostX = nx; }
               else if (canGhostMoveTo(ghostX, ny,     ghostConfine)) { ghostY = ny; }
-              else { ghostPauseTimer = 0.3; pickGhostTarget(); }
+              else {
+                // Blocked — open any nearby closed door before re-pathing
+                const blockedDoor = doors.find(d => !d.open &&
+                  Math.hypot((d.x + d.w/2) - ghostX, (d.y + d.h/2) - ghostY) < 36
+                );
+                if (blockedDoor) {
+                  blockedDoor.open = true;
+                  if (DEBUG_GHOST_BEHAVIOR)
+                    console.log(`[Ghost:${currentGhost.name}] forced door open: ${blockedDoor.label}`);
+                }
+                ghostPauseTimer = 0.3;
+                pickGhostTarget();
+              }
               ghostWalkCycle += 0.12;
               _ghostSpriteTimer++;
               if (_ghostSpriteTimer >= SPRITE_FRAME_SPEED) { _ghostSpriteTimer = 0; _ghostSpriteFrame = (_ghostSpriteFrame + 1) % 6; }
@@ -2782,14 +3094,7 @@
           }
           if (ghostAction === "interactNearby")      recordGhostActivity("interactNearby");
           if (ghostAction === "checkEvidenceTarget") recordGhostActivity("checkEvidenceTarget");
-          if (ghostAction === "roam" && ghostPauseTimer <= 0) {
-            // Nudge ghost toward a new waypoint — optionally change fav room
-            const bRoom = currentGhost?.specialRules?.includes("no_room_migration");
-            if (!bRoom && Math.random() < beh.roamTendency * 0.3) {
-              const interior = rooms.filter(r => r.w >= 80 && r.h >= 80 && r.w < 400 && r.h < 400);
-              if (interior.length) ghostFavRoom = interior[Math.floor(Math.random() * interior.length)];
-            }
-          }
+          // roam action is now handled by the timer system below — no inline room swap
 
           // Debug: uncomment to log ghost decisions
           // console.log(`[Ghost] action=${ghostAction} timer=${ghostActionTimer.toFixed(1)}s`);
@@ -2808,10 +3113,13 @@
 
             // EMF — ghost interaction leaves a located source near ghost position
             // Any ghost can trigger EMF 2–4; EMF Level 5 evidence adds a chance of level 5
+            // Boost: if player is in attracted room holding EMF Reader, double the level-5 chance
             {
               const hasEmf5 = ev.includes("EMF Level 5");
+              const emfBoosted = ghostAttractTimer > 0 && inventory[selectedSlot] === "EMF Reader";
+              const emf5Chance = emfBoosted ? 0.60 : 0.30;
               const roll = Math.random();
-              const lvl = hasEmf5 && roll < 0.30 ? 5 : (2 + Math.floor(Math.random() * 3)); // 2,3,4
+              const lvl = hasEmf5 && roll < emf5Chance ? 5 : (2 + Math.floor(Math.random() * 3)); // 2,3,4
               const jitter = 20;
               emfSources.push({
                 x: ghostX + (Math.random() - 0.5) * jitter,
@@ -2821,6 +3129,7 @@
               });
               // cap total sources so old events clean up if ghost fires fast
               if (emfSources.length > 6) emfSources.shift();
+              _dbgLastEmfLevel = lvl;
             }
 
             // D.O.T.S. Projector — needs an active placed projector within 150px of ghost
@@ -2888,6 +3197,21 @@
           if (conditionsMet && Math.random() < responseChance) {
             spiritBoxTimer      = 3.5;
             spiritBoxNoResponse = false;
+            // Spirit Box heard — ghost investigates player's room
+            if (!ghostHunting) {
+              const sbRoom = _roomAtPoint(player.x + 8, player.y + 8);
+              if (sbRoom) ghostLastHeardRoom = sbRoom;
+            }
+            // Spirit Box response = ghost is nearby — always attract to player's room
+            if (ghostHomeRoom && ghostAttractCooldown <= 0) {
+              const pRoom = _roomAtPoint(player.x + 8, player.y + 8);
+              if (pRoom) {
+                ghostFavRoom         = pRoom;
+                ghostAttractTimer    = 15;
+                ghostAttractCooldown = 30;
+                ghostRoamTimer = 0; ghostHomeTimer = 0;
+              }
+            }
           } else {
             spiritBoxNoResponse = true;
             setTimeout(() => { spiritBoxNoResponse = false; }, 2000);
@@ -5325,45 +5649,51 @@
         }
       }
 
-      // --- Ghost render — during hunt or via voodoo/tarot appear timer ---
-      if (currentGhost && (ghostHunting || ghostAppearTimer > 0)) {
+      // --- Ghost render — warning phase, active hunt, or voodoo/tarot appear timer ---
+      if (currentGhost && (huntWarning || ghostHunting || ghostAppearTimer > 0)) {
         const vis = (currentGhost.behavior && currentGhost.behavior.visibilityDuringHunt) || "blink";
-        // During hunt: solid/blink/stealth modes; outside hunt: translucent timer-based
         let ghostVisible = true;
         let alpha;
-        if (ghostHunting) {
+        let tintColor;
+
+        if (huntWarning) {
+          // Warning/stalking phase — slow flicker, orange-red tint, semi-transparent
+          const wPulse = Math.sin(huntBlinkT * Math.PI * 4); // faster flicker than hunt
+          ghostVisible = wPulse > -0.5;
+          alpha = ghostVisible ? (0.55 + 0.25 * Math.abs(wPulse)) : 0;
+          tintColor = "rgba(255,100,30,1)"; // orange warning tint
+        } else if (ghostHunting) {
           if (vis === "stealth") {
-            ghostVisible = false; // Deogen-like: invisible during hunt
+            ghostVisible = false;
           } else if (vis === "blink") {
-            // Blinks on/off every ~0.4s
             ghostVisible = Math.sin(huntBlinkT * Math.PI / 0.4) > -0.3;
             alpha = ghostVisible ? 0.85 : 0;
           } else {
-            // solid
             alpha = 0.9;
           }
+          tintColor = "rgba(220,60,60,1)"; // red chase tint
         } else {
           // Non-hunt appear timer (voodoo/tarot)
           const pulse = 0.5 + 0.15 * Math.sin(Date.now() / 300);
           alpha = Math.min(1, ghostAppearTimer) * 0.55 * pulse + 0.1;
+          tintColor = "rgba(180,200,220,1)"; // blue-grey passive tint
         }
+
         if (ghostVisible) {
           const dir = _angleToDir8(ghostMoveAngle);
-          const isWalking = ghostHunting || ghostPauseTimer <= 0;
+          const isWalking = huntWarning || ghostHunting || ghostPauseTimer <= 0;
           const img = isWalking ? _ghostSpriteWalk[dir][_ghostSpriteFrame] : _ghostSpriteIdle[dir];
           if (img && img.complete && img.naturalWidth > 0) {
             const W = 48, H = Math.round(48 * (img.naturalHeight / img.naturalWidth));
             ctx.save();
             ctx.globalAlpha = alpha ?? 0.7;
             ctx.drawImage(img, Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
-            // Grey desaturate overlay
             ctx.globalCompositeOperation = "saturation";
             ctx.fillStyle = "rgba(128,128,128,1)";
             ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
             ctx.globalCompositeOperation = "source-over";
-            // Hunt tint: red; non-hunt tint: blue-grey
             ctx.globalAlpha = (alpha ?? 0.7) * 0.35;
-            ctx.fillStyle = ghostHunting ? "rgba(220,60,60,1)" : "rgba(180,200,220,1)";
+            ctx.fillStyle = tintColor;
             ctx.fillRect(Math.round(ghostX - W/2), Math.round(ghostY - H/2), W, H);
             ctx.restore();
           }
@@ -6262,6 +6592,58 @@
           ctx.textAlign = "left";
         }
         ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+
+      // ── Ghost debug HUD ───────────────────────────────────────────────────
+      if (DEBUG_GHOST_BEHAVIOR && currentGhost) {
+        const behD    = getGhostBehavior(currentGhost);
+        const isRoaming   = ghostRoamTimer > 0;
+        const isAttracted = ghostAttractTimer > 0;
+        const sameRoom    = ghostFavRoom === ghostHomeRoom;
+        // Jinn speed boost active?
+        const jinnBoost  = currentGhost.specialRules?.includes("speed_boost_lights_on") && housePowerOn;
+        const roamPx     = (behD.huntSpeedBase * player.speed).toFixed(2);
+        const chasePx    = (behD.huntSpeedLOS  * player.speed).toFixed(2);
+        const curSpeed   = jinnBoost
+          ? `roam=${roamPx} chase=${chasePx} +JINN`
+          : `roam=${roamPx} chase=${chasePx}`;
+
+        const huntState = huntWarning ? `WARNING ${huntWarningTimer.toFixed(1)}s`
+                        : ghostHunting ? `HUNTING ${huntDuration.toFixed(1)}s${huntLostSightTimer > 0 ? " LOS-" + huntLostSightTimer.toFixed(1) : ""}`
+                        : huntCooldown > 0 ? `cooldown ${huntCooldown.toFixed(1)}s`
+                        : "idle";
+
+        const lines = [
+          `Ghost: ${currentGhost.name}`,
+          `Home: ${ghostHomeRoom?.label || "?"}`,
+          `Fav:  ${ghostFavRoom?.label  || "?"} ${sameRoom ? "(=home)" : "(roaming)"}`,
+          `Roam: ${ghostRoamTimer  > 0 ? ghostRoamTimer.toFixed(1)  + "s" : "—"}  Home: ${ghostHomeTimer > 0 ? ghostHomeTimer.toFixed(1) + "s" : "—"}`,
+          `Hunt: ${huntState}`,
+          `Attract: ${isAttracted ? ghostAttractTimer.toFixed(1)+"s" : "—"}  CD: ${ghostAttractCooldown > 0 ? ghostAttractCooldown.toFixed(1)+"s" : "—"}`,
+          `Speed: ${curSpeed}  EMF last: ${_dbgLastEmfLevel || "—"}`,
+          `[/] cycle ghost  \\ hide HUD`,
+        ];
+
+        ctx.save();
+        const pad = 6, lh = 13, fw = 210;
+        const ph  = pad * 2 + lines.length * lh;
+        const px  = canvas.width - fw - 8;
+        const py  = 8;
+        ctx.fillStyle = "rgba(0,0,0,0.72)";
+        ctx.fillRect(px, py, fw, ph);
+        ctx.strokeStyle = huntWarning ? "#ff8020" : ghostHunting ? "#e04040" : isAttracted ? "#e06040" : isRoaming ? "#e0c060" : "#40a0e0";
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(px, py, fw, ph);
+        ctx.font = "10px monospace";
+        ctx.textAlign = "left";
+        lines.forEach((ln, i) => {
+          const isHeader = i === 0;
+          ctx.fillStyle = isHeader ? "#ffe080" : i === lines.length - 1 ? "#606060" : "#d0d0d0";
+          if (isHeader) ctx.font = "bold 10px monospace";
+          else          ctx.font = "10px monospace";
+          ctx.fillText(ln, px + pad, py + pad + lh * i + 10);
+        });
         ctx.restore();
       }
 
@@ -10296,7 +10678,7 @@
           ghostY = Math.min(Math.max(player.y + 55, pRoom.y + 12), pRoom.y + pRoom.h - 12);
           ghostTargetX = ghostX; ghostTargetY = ghostY;
         }
-        ghostHunting    = true;
+        ghostHunting = true; huntWarning = false; huntLostSightTimer = 0;
         huntDuration    = 25;
         ghostHuntFlash  = 1.5;
         ghostAppearTimer = huntDuration + 2;
@@ -10352,8 +10734,8 @@
             dotsDisturbTimer = Math.max(dotsDisturbTimer, 4);
           break;
         case "hunt":
-          // The Reaper — cursed hunt
-          ghostHunting    = true;
+          // The Reaper — cursed hunt (no warning phase)
+          ghostHunting = true; huntWarning = false; huntLostSightTimer = 0;
           huntDuration    = 25;
           ghostHuntFlash  = 1.5;
           ghostAppearTimer = huntDuration + 2;
@@ -10381,9 +10763,9 @@
           playerSanity = Math.min(100, playerSanity + 50);
           break;
         case "death":
-          // The Noose — instant lose condition
-          playerSanity    = 0;
-          ghostHunting    = true;
+          // The Noose — instant lose condition (no warning phase)
+          playerSanity = 0;
+          ghostHunting = true; huntWarning = false; huntLostSightTimer = 0;
           huntDuration    = 40;
           ghostHuntFlash  = 1.5;
           ghostAppearTimer = huntDuration + 2;
