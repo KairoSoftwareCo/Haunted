@@ -1,5 +1,18 @@
 # Session Log
 
+## 2026-04-06 — Session 162
+- Map 2 — Gallow's Inn: fully playable second map
+  - `buildMap(id)` architecture: `_currentMapId` module-level var set from resolved `_mid`; all map data rebuilt each round
+  - Map 1 layout: E-W hallway spine (y:340-390), 4 north rooms (Reception/101/102/Suite), 4 south rooms (Manager/103/104/Laundry), Storage, Lobby, Yard
+  - Furniture: 40+ pieces across all rooms — beds, nightstands, dressers, TV stands, reception desk, key rack, washing machines, dryers, storage shelves, lobby benches + vending machines
+  - Floor textures: hallway threadbare carpet runner, guestroom worn carpet strips, reception linoleum tiles, laundry/storage concrete tile, lobby checkered tile
+  - Room edge highlights: `_RHL` made ternary — map-0 original 14-entry array vs map-1 11-entry array
+  - Front door marker: `_fdx/_fdr/_fdcx` derived from `_currentMapId`; same dynamic variables for inside + outside view
+  - Motel flat roof: tar-and-gravel texture, parapet rim, HVAC units, water tower, hallway spine visible on roof, south facade with windows + neon sign, front entrance
+  - Fog light spill: `fDoor.label === "Front Entrance"` added to find clause; map-1 uses Lobby rect for spill area
+  - Bone exclusion: `r.label !== "Lobby"` added alongside Foyer exclusion
+  - Map name HUD: `_mapNameMap` updated with id 1 → "Gallow's Inn"
+
 ## 2026-04-05 — Session 161
 - Phase 51 — Ghost LOS + speed rebalance
   - Replaced 350px distance check with room-identity check: `_roomAtPoint(ghost) === _roomAtPoint(player)` → `_hasLOS`

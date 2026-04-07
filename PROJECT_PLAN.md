@@ -18,7 +18,7 @@
 - [x] Visibility system: doorway-wedge FOV; offscreen fog canvas; triangle cast from player through open door edges
 - [x] Sight range: radial gradient falloff layered on fog canvas; soft fade from 90px to 260px
 - [x] Room lights + flashlight: switches per room (E), directional flashlight (F), 40° cone, unlit rooms stay dark
-- [ ] Tilemap rendering
+- [x] Tilemap rendering + second map (Gallow's Inn — motel, 11 rooms, medium)
 - [x] Collision detection (walkable rect system, wall sliding)
 - [x] Room connections: 11 open-gap connectors; house fully traversable
 - [x] Multi-room layout: 12-room house (hallway spine, foyer, master suite, living room, garage/laundry, kids wing x3, kitchen/dining)

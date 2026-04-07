@@ -176,7 +176,8 @@
 - [x] Phase 49 — Ghost presence detection: ghost enters player's room → sndColdWind() + "PRESENCE FELT" cyan overlay (3s); _prevGhostInRoom edge detect; gated on safeTimeOver && !ghostHunting
 - [x] Phase 50 — Death sequence: 2.5s _deathTimer on catch; sndDeath() (static + shriek + thud); red flash → black-in → "ELIMINATED" text overlay; controls frozen during sequence
 - [x] Phase 51 — Ghost LOS + speed rebalance: same-room check replaces 350px distance LOS; ghost chases stale _huntLastKnownX/Y at huntSpeedBase when player out of sight; gives up after 8s; huntSpeedBase 1.0→0.85, huntSpeedLOS 1.4→1.1; Deogen exempt (always_knows_player_pos); on-screen hunt/notification/evidence text overlays removed
-- [ ] Tilemap / multi-room map
+- [x] Tilemap / multi-room map
+- [x] Map 2 — Gallow's Inn: full room/door/doorway data, furniture, floor textures, flat motel roof, map-aware front door, map-aware fog light spill
 
 ## Done
 - Project files created
