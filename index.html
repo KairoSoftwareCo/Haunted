@@ -2779,7 +2779,7 @@
         evidence: ["EMF Level 5", "D.O.T.S. Projector", "Spirit Box"],
         notes: "Never leaves footprints. Can teleport to players. Salt provokes a reaction.",
         behavior: { roamTendency: 1.5 },
-        specialRules: ["no_footprints", "teleport_to_player", "salt_reaction"],
+        specialRules: ["no_footprints", "teleport_to_player", "salt_immune"],
       },
       {
         name: "Phantom",
@@ -4237,7 +4237,13 @@
                            : _isRoomLit(_pRoom) ? "lit room"
                            : "dark room";
         }
-        if (incensePacified > 0) incensePacified -= delta;
+        if (incensePacified > 0) {
+          const _incPrev = incensePacified;
+          incensePacified -= delta;
+          if (_incPrev > 0 && incensePacified <= 0 && DEBUG_GHOST_BEHAVIOR) {
+            console.log(`[Ghost:${currentGhost?.name}] Incense lockout expired — normal hunts eligible again`);
+          }
+        }
         if (huntCooldown    > 0) huntCooldown    -= delta;
         if (currentGhost?.name === "Thaye") {
           // Thaye ages 2× faster when player is nearby — approaching speeds up its pacification
@@ -4248,6 +4254,36 @@
 
         const pcx = player.x + 8, pcy = player.y + 8;
         const distToPlayer = Math.hypot(ghostX - pcx, ghostY - pcy);
+
+        // ── Incense / Smudge detection (unified across roam / warning / hunt)
+        // Spirit: incenseDuration=180 → 180s normal-hunt lockout is the main ID test.
+        // The `incensePacified <= 0` gate prevents re-applying incense from
+        // resetting or extending an active lockout (no chain-reset abuse).
+        // Cursed hunts (Ouija / Summoning Circle / Reaper) ignore this timer.
+        {
+          const _incenseInRange = worldItems.some(it =>
+            it.name === "Incense" && it.active &&
+            Math.hypot(it.x + 6 - ghostX, it.y + 6 - ghostY) < 120
+          ) || (inventory[selectedSlot] === "Incense" && heldItemOn && distToPlayer < 120);
+          const _incenseImmune = currentGhost?.specialRules?.includes("immune_to_smudge");
+          if (_incenseInRange && !_incenseImmune && incensePacified <= 0 && _huntConfusedTimer <= 0) {
+            incensePacified = beh.incenseDuration || 90;
+            _completeObjective("use_incense");
+            if (ghostHunting) {
+              // Hunt continues; ghost wanders blindly for 6s. Lockout still applies after hunt ends.
+              _huntConfusedTimer = 6;
+              huntLostSightTimer = 0;
+              ghostPresenceFlash = Math.max(ghostPresenceFlash, 1.5);
+              if (currentGhost?.specialRules?.includes("smudge_room_trap") && ghostFavRoom) {
+                ghostRoamTimer = 0;
+                ghostHomeTimer = beh.incenseDuration || 90;
+              }
+            }
+            if (DEBUG_GHOST_BEHAVIOR) {
+              console.log(`[Ghost:${currentGhost.name}] INCENSE applied — normal-hunt lockout ${incensePacified.toFixed(0)}s (during ${ghostHunting ? "HUNT" : huntWarning ? "WARNING" : "roam"})`);
+            }
+          }
+        }
 
         // ── Hunt warning phase (stalking) ───────────────────────────────────
         if (huntWarning) {
@@ -4323,28 +4359,7 @@
           }
         } else if (ghostHunting) {
           // ── Active chase ───────────────────────────────────────────────────
-          // Incense check
-          const incenseInRange = worldItems.some(it =>
-            it.name === "Incense" && it.active &&
-            Math.hypot(it.x + 6 - ghostX, it.y + 6 - ghostY) < 120
-          ) || (inventory[selectedSlot] === "Incense" && heldItemOn && distToPlayer < 120);
-          if (incenseInRange && incensePacified <= 0 && _huntConfusedTimer <= 0) {
-            const isImmune = currentGhost?.specialRules?.includes("immune_to_smudge");
-            if (!isImmune) {
-              // Smudge during hunt: 6s confusion (ghost wanders, can't track player)
-              // then hunt resumes — matches Phasmophobia behavior
-              _huntConfusedTimer = 6;
-              huntLostSightTimer = 0; // confusion is separate from lost-sight give-up
-              ghostPresenceFlash = Math.max(ghostPresenceFlash, 1.5);
-              // smudge_room_trap (Yurei): confusion also locks ghost to current room
-              if (currentGhost?.specialRules?.includes("smudge_room_trap") && ghostFavRoom) {
-                ghostRoamTimer = 0;
-                ghostHomeTimer = beh.incenseDuration || 90;
-              }
-            }
-            incensePacified = beh.incenseDuration || 90;
-            _completeObjective("use_incense");
-          }
+          // (Incense handled by unified check above — sets lockout + 6s confusion during hunt.)
 
           // Note: Crucifix blocks hunt STARTS (handled in hunt-start check), not active hunts.
           // An active hunt cannot be stopped by Crucifix — only Incense or hiding can end it.
@@ -5121,20 +5136,36 @@
             }
           }
 
-          // Wraith: teleport_to_player — rarely blinks to a room near the player
-          // Causes a brief EMF spike at the teleport destination + sanity drain
+          // Wraith: teleport_to_player — rarely blinks to a tile near the player.
+          // Never fires during hunt/warning. Cancels if no valid (wall-free) tile found.
+          // EMF spike at destination: usually level 2, 15% chance of level 5.
           if (currentGhost.specialRules?.includes("teleport_to_player") &&
               ghostAction === "idle" && safeTimeOver && !ghostHunting && !huntWarning &&
               Math.random() < 0.004 * delta * 60) {
-            const _pRoom = _roomAtPoint(player.x + 8, player.y + 8);
-            if (_pRoom) {
-              ghostX = _pRoom.x + _pRoom.w / 2 + (Math.random() - 0.5) * (_pRoom.w * 0.4);
-              ghostY = _pRoom.y + _pRoom.h / 2 + (Math.random() - 0.5) * (_pRoom.h * 0.4);
-              ghostFavRoom = _pRoom;
-              emfSources.push({ x: ghostX, y: ghostY, level: 2, timer: 4 });
+            const _pcx = player.x + 8, _pcy = player.y + 8;
+            if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:Wraith] teleport attempt — searching valid tile near player`);
+            // Try up to 10 candidates 60–140px from player; take first wall-clear tile.
+            let _tpx = null, _tpy = null;
+            for (let _a = 0; _a < 10; _a++) {
+              const _ang = Math.random() * Math.PI * 2;
+              const _r   = 60 + Math.random() * 80;
+              const _cx  = _pcx + Math.cos(_ang) * _r;
+              const _cy  = _pcy + Math.sin(_ang) * _r;
+              if (canGhostMoveTo(_cx, _cy, null)) { _tpx = _cx; _tpy = _cy; break; }
+            }
+            if (_tpx !== null) {
+              ghostX = _tpx; ghostY = _tpy;
+              const _destRoom = _roomAtPoint(ghostX, ghostY);
+              if (_destRoom) ghostFavRoom = _destRoom;
+              const _emfLvl = Math.random() < 0.15 ? 5 : 2;
+              emfSources.push({ x: ghostX, y: ghostY, level: _emfLvl, timer: _emfLvl === 5 ? 6 : 4 });
+              if (emfSources.length > 6) emfSources.shift();
               ghostAppearTimer = Math.max(ghostAppearTimer, 0.6);
+              recordGhostActivity("ghostEvent");
               drainSanity(2.0, "wraith teleport");
-              if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:Wraith] TELEPORT to ${_pRoom.label}`);
+              if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:Wraith] TELEPORT success → (${Math.round(ghostX)},${Math.round(ghostY)}) in ${_destRoom?.label || "outside"}, EMF ${_emfLvl}`);
+            } else {
+              if (DEBUG_GHOST_BEHAVIOR) console.log(`[Ghost:Wraith] teleport cancelled — no valid tile near player`);
             }
           }
           if (ghostAction === "checkEvidenceTarget") {
@@ -10168,6 +10199,7 @@
           `Fav:  ${ghostFavRoom?.label  || "?"} ${sameRoom ? "(=home)" : "(roaming)"}`,
           `Roam: ${ghostRoamTimer  > 0 ? ghostRoamTimer.toFixed(1)  + "s" : "—"}  Home: ${ghostHomeTimer > 0 ? ghostHomeTimer.toFixed(1) + "s" : "—"}`,
           `Hunt: ${huntState}`,
+          `Incense lock: ${incensePacified > 0 ? incensePacified.toFixed(1) + "s / " + (behD.incenseDuration || 90) + "s" : "—"}`,
           `Sanity: ${playerSanity.toFixed(0)}%  Thresh: ${_dbgThresh}%  Roll: ${(_dbgRoll*100).toFixed(0)}%`,
           `Drain: ${_dbgSanityDrain.toFixed(2)}%/s  [${_dbgSanitySource || "—"}]`,
           `Attract: ${isAttracted ? ghostAttractTimer.toFixed(1)+"s" : "—"}  CD: ${ghostAttractCooldown > 0 ? ghostAttractCooldown.toFixed(1)+"s" : "—"}`,
