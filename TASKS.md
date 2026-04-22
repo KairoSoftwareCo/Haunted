@@ -1,6 +1,31 @@
 # Tasks
 
 ## Current
+- [x] Fix ghost hunt door traversal: hunting ghost ignores door collision, opens doors on contact with slam sound + UV prints; canGhostMoveTo skips door check when ghostHunting/huntWarning
+- [x] Fix ghost van/yard safe zone: ghost no longer targets player in van or yard during hunts; 7 target acquisition pathways gated by _playerInSafeZone
+- [x] Fix ghost doorway traversal: _ghostRoom() helper resolves doorway positions, waypoint threshold 8→14px, hunt chase stuck recovery added
+- [x] Fix ghost doorway threshold jitter: hunt collision reduced to 4×4 in canGhostMoveTo so ghost crosses room-doorway boundaries without hesitation
+- [x] Add hunt/search debug HUD: Search line (ghost room → target room, search count, path remaining) + State line (LOS, hidden, last known room, player room)
+- [x] Split debug HUD into 3 panels (Ghost Info / Hunt Debug / Collapsible Controls); controls collapse via click or T key
+- [x] Fix pre-hunt hidden players unfairly found: _initHuntLastKnown() now checks isHiding before seeding ghost with player position; affects 6 cursed hunt starts
+- [x] Rebuild hunt detection rules: remove omniscient tracking from warning phase, range-gate noise (200px) and electronics (150px), kill requires active detection window, warning→hunt carries over detection state instead of re-reading player position
+- [x] Add debug no-detection toggle: [N] key or button disables all ghost sensing (LOS, noise, electronics, closet reveal, furniture spot-check, hunt start seeding, kill check)
+- [x] Add debug lights ON/OFF buttons: side-by-side in debug controls panel; ON flips breaker + all switches, OFF turns all switches off
+- [x] Fix ghost hunt doorway traversal: same-room-only LOS beeline (cross-room uses BFS waypoints), multi-corner walkable fallback during hunts, warning phase same fix, debug waypoint overlay + GHOST→NEXT ROOM button
+- [x] Add committed doorway-crossing state: 3-phase crossing (approach→cross→exit) prevents ghost oscillation at doorway thresholds; unrestricted movement within doorway rect during crossing; applied to both hunt + warning phases; debug overlay + HUD for crossing state
+- [x] Cinematic jumpscare death animation: 5-phase kill sequence (impact→lunge→face→collapse→blackout), 3 random variants (lunge/flicker/static), phase-based shake, layered audio, ghost sprite scales toward camera with horror filters
+- [x] Fix centered doorway crossing: _computeCrossingPoints helper determines axis-aligned approach/cross/exit points; ghost lines up 14px before doorway center then crosses straight through; collision bypass expanded 4px around doorway rect; applied to both warning + active hunt
+- [x] Post-death ghost phase: 5s spectral respawn at death location with journal access for ghost guess, then 2s loading screen, then lobby with results; immobile player, spectral rendering, dark vignette overlay, hunt-blocked
+- [x] Refine post-death flow: fix journal timer freeze (tick moved to main loop), strip all death text from ghost phase overlay, cinematic extraction loading screen matching load-in style (PRU header, "Leaving site", maroon progress bar, 2.5s duration)
+- [x] Remove death message screen: stripped "ELIMINATED" and "the ghost got you" from blackout phase; journal already opens normally during post-death (no blockers found)
+- [x] Fix post-death journal + ghost movement: DEBUG_GHOST_BEHAVIOR block was intercepting J key before journal handler; added postDeathPhase guard to skip debug keys while dead; enabled 55% speed floaty movement during ghost phase (desktop + mobile)
+- [x] Dedicated sanity HUD: top-left pill below difficulty badge with SANITY label, percentage readout, bar meter, 3-color tiers (green/amber/red), low-sanity flicker+flash+glow effects
+- [x] Sanity breakdown panel: click-to-expand live debug showing net rate, 4 continuous factors (passive/ghost sight/hunt/sprint), power+difficulty multipliers, recent instant hits with 6s fade; _sanTrk tracker instrumented across drainSanity + 7 setSanity call sites
+- [x] Sanity HUD readability redesign: wider pill (136×42) with status word + rate on main view; breakdown grouped into Environment/Movement/Ghost/Modifiers/Recent sections with On/Off labels, friendly names, color-coded active vs inactive rows
+- [x] Baseline sanity rules alignment: DARK 0.06→0.12, LIT 0.02→0.00, sprint 0.06→0.08, hunt drain removed, ghost event 3→5, spirit box 1.5→3, EMF5 1→2, writing 2→3, ouija question 2→5, ouija break 4→10, meds 40→35; HUD redesigned with exact baseline categories/thresholds
+- [x] Difficulty sanity rules: multiplier (x0.85��x1.45) moved from instant hits to continuous drains only; presets corrected (sanityDrainSpeed 85/100/115/130/145, Insanity startingSanity 75→100); HUD Difficulty section shows name+stars, drain mult, setup protection, hunt protection
+- [x] Fix environment sanity detection: _roomAtPoint→_ghostRoom (doorway-aware) as single source of truth; detection runs every frame; HUD shows Room/Light/Power/Status/Drain diagnostic; flashlight excluded from room-light check
+- [x] Fix hunt chase vs search: explicit _huntState state machine (chase→lastSeen→search); ghost only beelines with LOS; moves to exact last-seen position after LOS breaks; search at 55% base speed; noise/electronics redirect search but don't restore chase; debug HUD shows state+LOS+last seen pos
 - [x] Ghost flash event: pale rect appears/fades at random floor positions after safe time
 - [x] Roaming ghost entity (bounces diagonally, visible after safe time)
 - [x] House shell layout: 9 rooms placed and aligned (edges snap cleanly)

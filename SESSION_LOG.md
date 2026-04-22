@@ -1,5 +1,345 @@
 # Session Log
 
+## 2026-04-21 — Session 190
+- Fixed hunt chase behavior with explicit state machine (`_huntState`):
+  - **Root cause**: No separation between chase/search states. Ghost at 85% player speed during "search" felt like full chase. Noise (200px) and electronics (150px) continuously leaked player's room to ghost even after LOS broke. No intermediate "move to last seen position" phase.
+  - **New state machine**: `"chase"` → `"lastSeen"` → `"search"`
+    - **chase**: has LOS, beeline in same room, BFS cross-room. Speed = `huntSpeedLOS` (1.1x+) with 20% acceleration ramp.
+    - **lastSeen**: lost LOS, BFS to last known room, then to exact last known XY. Speed = `huntSpeedBase` (0.85x). Transitions to search when reaching last seen position.
+    - **search**: random wander in room, expand to neighbors after 3 points. Speed = `huntSpeedBase * 0.55` (0.47x). Noticeably slower than player.
+  - **State transitions**: LOS acquired → chase. LOS lost → lastSeen. Reached last seen pos → search. Noise/electronics in search → lastSeen (redirected, not full chase). Smudge confusion → search.
+  - **Last seen position**: `_huntLastKnownX/Y` only updated during chase (LOS active). Noise/electronics update room only, NOT exact position.
+  - **Revenant**: speed now uses `_huntState !== "chase"` instead of `huntLostSightTimer > 0`.
+  - **Debug HUD**: shows State (CHASE/LASTSEEN/SEARCH), LOS yes/no, lost sight timer, detect source, last seen room + coords, search count.
+  - **Debug overlay**: orange X marker at last seen position, room box labeled with hunt state.
+  - **Debug dump**: now includes `state`, `detectSrc`, `lastKnownPos`.
+- All gameplay tests pass
+
+## 2026-04-21 — Session 189
+- Fixed environment-based sanity detection (lit vs dark):
+  - **Root cause**: `_roomAtPoint()` returned `null` when player stood in doorway connector rects (separate from room rects). Sanity code treated `null` as "safe (outside)" → zero drain in doorways regardless of lighting.
+  - **Fix**: Replaced `_roomAtPoint()` with doorway-aware `_ghostRoom()` for sanity detection. When player is in a doorway, resolves to the nearest overlapping room (same algorithm ghost system already used).
+  - **Single source of truth**: New detection block runs every frame (not gated by safeTimeOver/ghostHunting), writes `_sanTrk.roomLabel`, `_sanTrk.roomLit`, `_sanTrk.inDark`, `_sanTrk.isOutside`, `_sanTrk.powerOn`.
+  - **Passive drain** and **sprint drain** both read from `_sanTrk` instead of doing their own `_roomAtPoint` lookups.
+  - **HUD Environment section** redesigned with 5 diagnostic rows: Room (label), Room Light (On/Off), Power (On/Off), Env Status (Lit/Dark/Safe), Darkness Drain (rate or Off).
+  - **Flashlight does NOT count** as room lighting for sanity — only room light switches + breaker power.
+  - **Outside detection**: `playerOutside` (y > 720) plus Yard room label both gate the outside-safe check.
+- All gameplay tests pass
+
+## 2026-04-21 — Session 188
+- Added difficulty rules to sanity system and HUD:
+  - **Difficulty presets corrected**: `sanityDrainSpeed` 100/150/200/200/200 → 85/100/115/130/145 (Amateur→Insanity)
+  - **Insanity startingSanity**: 75 → 100 (matches baseline)
+  - **Multiplier moved**: `_diffSanityDrainMult` removed from `drainSanity()` (instant hits); now applied to 3 continuous drain sites: passive darkness, ghost sighting, sprint
+  - **HUD Difficulty section** (replaces old Modifiers section in expanded breakdown):
+    - Difficulty name with colored star rating (1–5 stars, green→red)
+    - Drain Multiplier (e.g. "x0.85" for Amateur)
+    - Setup Protection countdown or "None"
+    - Hunt Protection "On"/"Off" based on `safeTimeOver`
+  - Setup phase (300/120/0/0/0s) and hunt protection gating already correct — no changes needed
+- All gameplay tests pass
+
+## 2026-04-21 — Session 187
+- Aligned sanity system to exact baseline rules and redesigned HUD:
+  - **Constants changed**:
+    - `SANITY_DRAIN_DARK`: 0.06 → 0.12%/s
+    - `SANITY_DRAIN_LIT`: 0.02 → 0.00%/s (no drain in lit rooms)
+    - Sprint drain: 0.06 → 0.08%/s
+  - **Instant hits changed**:
+    - Ghost event: 3 → 5%, Spirit Box: 1.5 → 3%, EMF5: 1 → 2%, Ghost writing: 2 → 3%
+    - Ouija question: 2 → 5%, Ouija break: 4 → 10%
+  - **Removed**: hunt passive drain (was 0.6%/s) — hunts no longer drain sanity per baseline
+  - **Sanity Meds default**: 40 → 35% (Amateur difficulty preset also updated)
+  - **Status thresholds** match baseline exactly:
+    - Stable (net >= -0.01), Draining Slowly (-0.01 to -0.15), Draining (-0.15 to -0.30), Draining Fast (< -0.30), Recovering (> 0)
+  - **Expanded breakdown** redesigned with exact baseline categories:
+    - Environment: Darkness On/Off, Base Drain, Power Off Multiplier (when active), Effective Drain
+    - Movement: Sprinting On/Off with rate
+    - Ghost: Ghost Nearby / Phantom Stare (continuous sight drain), or Ghost Effects Off
+    - Recovery: Sanity Meds On/Off (shows recent use)
+    - Modifiers: Difficulty multiplier (only when ≠ 1.0)
+    - Recent: last 3 instant hits with friendly names from lookup table, 5s fade
+  - Recent hit decay reduced from 6s to 5s
+  - Friendly name mapping for all 20 instant hit sources
+  - Rate display now shows "%/s" suffix for clarity
+  - Ghost-specific abilities (Banshee, Wraith, Jinn, Moroi, Poltergeist, Onryo) unchanged in code but show with friendly names in Recent section
+- All gameplay tests pass
+
+## 2026-04-21 — Session 186
+- Redesigned sanity HUD for readability and friendlier UX:
+  - **Main pill** (always visible, 136×42px): wider layout with 3 clear rows:
+    - Row 1: "SANITY" label + large percentage (15px bold)
+    - Row 2: rounded bar with tick marks at 25/50/75%
+    - Row 3: human-readable status ("Stable" / "Draining" / "Draining Fast" / "Recovering") + numeric rate
+  - **Expanded breakdown** (click pill to toggle): grouped into labeled sections with headers + separator lines:
+    - **Environment**: Darkness / Room Lights / Safe Zone + Power Off Penalty (when active)
+    - **Movement**: Sprinting in Dark
+    - **Ghost**: Ghost Nearby / Phantom Stare + Hunt Drain
+    - **Modifiers**: Difficulty multiplier (only shown when ≠ 1.0)
+    - **Recent**: last 3 instant hits with title-cased names, signed amounts, 6s fade
+  - Each row shows On/Off state clearly — active rows in bright warm text with red/green values, inactive rows in dark muted gray with "Off" label
+  - Status word is color-coded: red (draining fast), amber (draining), green (recovering), gray (stable)
+  - Panel width matches pill width (136px) for visual alignment
+  - All information preserved from previous version, just reorganized and renamed
+- All gameplay tests pass
+
+## 2026-04-21 — Session 185
+- Expanded sanity HUD with live breakdown panel showing every real sanity factor:
+  - **Tracking system**: `_sanTrk` object records continuous drain rates per frame and instant hits with 6s decay
+  - `_sanTrkReset()` called at top of each `update()` frame — zeros continuous rates, ages/prunes recent hits
+  - `_sanTrkHit(source, amount)` records instant events with sign (+/-)
+  - **Instrumented 4 continuous drain paths**: passive room drain (line 5394), ghost sighting (line 5092), hunt drain (line 5987), sprint in dark (line 7387)
+  - **Instrumented `drainSanity()`** (line 1001) to auto-record all instant hits — covers 20 event sources
+  - **Instrumented 3 gain paths**: sanity meds (line 2909), tarot fate +25 (line 19232), tarot saint +50 (line 19277)
+  - **Breakdown panel** (click sanity pill to toggle):
+    - NET RATE line: color-coded sum of all continuous drains
+    - Active factors: each with label, source detail, rate in %/s
+    - Power off multiplier (shown only when ≠ 1.0)
+    - Difficulty multiplier for instant hits (shown only when ≠ 1.0)
+    - Inactive factors collapsed into one gray line
+    - RECENT HITS section: last 3 instant events with source + amount, fading over 6s
+  - Panel is 170px wide, dark background, compact 11px line height
+  - Click the sanity pill (top-left) to expand/collapse
+- All gameplay tests pass
+
+## 2026-04-21 — Session 184
+- Added dedicated sanity HUD panel — top-left, below difficulty badge at position (8, 46)
+  - Dark semi-transparent rounded pill background (98×28px)
+  - "SANITY" label (7px bold monospace, muted color)
+  - Large percentage readout (13px bold, right-aligned within pill)
+  - Horizontal bar meter (88×4px) with tick marks at 25/50/75%
+  - Three color tiers: green (>60%), amber (31-60%), red (≤30%)
+  - Low-sanity effects: flickering alpha (dual sine waves at /180 and /67), brief red flash on percentage text (80ms every 600ms), glowing bar tip with 6px shadow blur
+  - Hidden during death animation and post-death phase
+  - Reads live `playerSanity` value — no duplicate state
+- Replaced old comment "(Sanity bar, temp badge, and noise bar removed)" with updated note
+- No old in-game sanity display existed to remove — the van's sanity monitor panel is separate and unchanged
+- All gameplay tests pass
+
+## 2026-04-21 — Session 183
+- Fixed journal not working during post-death ghost phase:
+  - **Root cause**: `DEBUG_GHOST_BEHAVIOR` block (line 2703) intercepted J/j key for `_triggerForceEvent()` and returned early, preventing the journal toggle at line 2807 from ever firing. Debug mode is always on (`true`).
+  - **Fix**: added `_postDeathPhase === 0` guard to the debug key block so it's skipped during post-death, letting J reach the journal handler
+- Enabled ghost movement during post-death phase:
+  - Desktop keyboard movement: `_postDeathPhase === 1` now allowed in the movement gate (line 7192), speed reduced to 55% for floaty feel
+  - Mobile joystick movement: same gate change (line 7201), same 55% speed multiplier
+  - Normal room collision still applies (canMoveTo has no death gate)
+  - Spectral rendering already existed (flickering transparent blue sprite)
+- **Inputs during dead ghost phase**:
+  - Allowed: WASD/arrow movement (55% speed), journal toggle (J), journal ghost guess, Escape to close journal, mobile joystick
+  - Blocked: flashlight, inventory cycle, item drop, item use, interact/E, Escape→lobby, sprint (no effect at 55%), all debug hotkeys (ghost cycling, force hunt, etc.)
+- All gameplay tests pass
+
+## 2026-04-21 — Session 182
+- Removed death message text from kill animation blackout phase:
+  - Stripped "ELIMINATED" header (`#cc2020`, bold 28px) and "the ghost got you" subtext (`#884040`, 13px) from the blackout phase (2.6–3.2s of death animation)
+  - Black fade remains — just no text on it
+- Journal already works during post-death (toggle at line 2808 runs before the `_postDeathPhase > 0` guard at line 2810; timer tick already in main loop from Session 181)
+- Ghost phase overlay already has no text (stripped in Session 181) — only quiet dark vignette
+- No other death message screens exist in the codebase
+- All gameplay tests pass
+
+## 2026-04-21 — Session 181
+- Refined post-death flow for subtlety and cinematic feel:
+  - **Bug fix**: journal froze the post-death timer — `_postDeathTimer` tick was inside `update()` which is skipped when `journalOpen` is true; moved tick to main `loop()` function so it runs regardless of journal state
+  - **Removed all death text**: stripped "YOU DIED" header, countdown timer bar, "Open journal [J] to identify the ghost" hint, "Xs remaining" countdown from ghost phase overlay; only quiet dark vignette with subtle blue wash remains
+  - **Cinematic extraction loading screen**: replaced generic fade-to-black with a styled transition matching the load-in aesthetic:
+    - Background: `#030206` with purple-red vignette
+    - "PHANTOM RESPONSE UNIT" header in `#4a2030`
+    - "Leaving site" main text in `#c0a8a0` (Georgia font + red shadow)
+    - "Returning to base..." with animated dots in `rgba(160,120,120,0.75)`
+    - Maroon progress bar (`#6a3040`) — visually distinct from load-in's difficulty color bar
+    - Fade in/out alpha matching load-in pattern
+  - Loading duration increased from 2.0s to 2.5s for better pacing
+- All gameplay tests pass
+
+## 2026-04-21 — Session 180
+- Added post-death ghost phase: after the 3.2s death animation, player respawns at exact death location as a spectral ghost for 5 seconds before transitioning to lobby
+- **Flow**: alive → death animation (3.2s) → ghost spectral phase (5s) → loading transition (2s) → pre-game lobby with results
+- **Ghost spectral phase** (5s):
+  - Player rendered as pale/transparent with spectral blue tint, soft flickering (desaturated + brightness 1.6 + sepia + hue-rotate 200°)
+  - Player is immobile — keyboard, mobile joystick, interactions all blocked
+  - Journal/notebook access works — player can open journal and pick ghost guess during this window
+  - Dark vignette overlay with "YOU DIED" header, countdown bar, and journal hint text
+  - Ghost guess made during this window is preserved for round results/XP calculation
+  - No hunts can start (huntCooldown forced to 999), no re-kill possible (postDeathPhase guard on kill check)
+- **Loading transition** (2s): fade to black with subtle static bars and pulsing "Loading..." text
+- After loading completes, `_endRound(true)` runs with the player's final ghost guess
+- State variables: `_postDeathPhase` (0=none, 1=ghost, 2=loading), `_postDeathTimer` (countdown), `_deathPosX/_deathPosY` (death location)
+- Input blocking: post-death guard on flashlight, inventory, drop, use, interact, Escape→showTitle; only journal toggle and journal Escape close pass through
+- All gameplay tests pass
+
+## 2026-04-21 — Session 179
+- Fixed ghost hunt doorway crossing to use centered approach/cross/exit path
+  - **Root causes**: (1) ghost approached doorways at steep diagonal angles from off-axis room centers — axis-separated collision fallback slid it along the door frame edge instead of steering center, (2) exit point was computed toward dest room center creating a diagonal exit vector, (3) no crossing-axis awareness so horizontal vs vertical passages were treated identically
+  - **Fix**: new `_computeCrossingPoints(dw, fromRoom, toRoom)` helper determines crossing axis (vertical vs horizontal based on room positions), then computes 3 aligned points:
+    - `ax, ay` — approach point: 14px into FROM room, aligned with doorway center on the perpendicular axis (ghost lines up before entering)
+    - `cx, cy` — crossing center: doorway rect center (unchanged)
+    - `ex, ey` — exit point: 14px into TO room, aligned with doorway center (straight-through exit)
+  - Approach phase now targets `ax, ay` (alignment) instead of `cx, cy` (doorway center)
+  - Collision bypass margin expanded by 4px around doorway rect during crossing for smoother room→doorway boundary transition
+  - Applied to both warning and active hunt crossing paths
+  - Debug overlay: orange approach dot, yellow center dot, green exit dot, dashed line tracks current phase target
+- All gameplay tests pass
+
+## 2026-04-21 — Session 178
+- Replaced the plain death sequence with a cinematic 5-phase jumpscare kill animation (3.2s total):
+  - **IMPACT** (0–0.15s): White flash + red surge, violent camera shake (35+px)
+  - **LUNGE** (0.15–0.85s): Ghost sprite scales 2x→11x toward camera, darkening backdrop, static bars begin, vignette closes in
+  - **FACE** (0.85–1.8s): South-facing ghost face dominates screen at 10x–15x with wobble, heavy horror filter (desaturated/sepia/contrast 1.9), red vignette tightens, persistent static overlay
+  - **COLLAPSE** (1.8–2.6s): Ghost dissolves into static, near-total darkness, dense static bars
+  - **BLACKOUT** (2.6–3.2s): Solid black, "ELIMINATED" text fades in, transitions to results
+- 3 random animation variants: (0) direct lunge — smooth scale-up, (1) flicker-rush — ghost rapidly appears/disappears while growing, (2) static-collapse — heavy static with ghost emerging from noise
+- Phase-based camera shake: violent during IMPACT, sustained decay through LUNGE/FACE, gentle fade through COLLAPSE
+- New `sndDeathJumpscare()` layered audio: impact thud + static burst at t=0, shriek layers at 80ms/260ms, sustained drone at 850ms, decaying static at 1650ms
+- Ghost sprite rendered with horror CSS filter chain (desaturate → sepia → hue-rotate per ghost type → low brightness → high contrast)
+- State variables: `_deathVariant` (0–2), `_deathGhostImg` (captured south-facing sprite at kill)
+- All existing death flow preserved: kill trigger, movement freeze, results popup, round reset cleanup
+- All gameplay tests pass
+
+## 2026-04-21 — Session 177
+- Added committed doorway-crossing state (`_huntCrossing`) to eliminate ghost hesitation/oscillation at doorway thresholds during hunts
+  - **Root causes**: (1) `_ghostRoom()` flips between rooms mid-doorway, triggering premature search/wander, (2) detection updates cause `_huntPathIdx` reset + path rebuild mid-crossing, (3) every frame independently re-evaluates movement without commitment
+  - **3-phase crossing**: approach → cross → exit, with distance thresholds (8px, 4px, dest-room-check). 2s timeout safety net.
+  - `canGhostMoveTo` grants unrestricted movement within the doorway rect during active crossing
+  - Same crossing logic applied to both warning phase and active hunt movement
+  - Crossing state cleared on round reset and stuck recovery
+  - Debug HUD shows crossing phase, from→to rooms, and elapsed time
+  - Debug overlay draws doorway rect (green), center dot (yellow), exit dot (green), dashed path line, and phase label during crossing
+- All gameplay tests pass
+
+## 2026-04-21 — Session 176
+- Fixed ghost hunt doorway traversal — 3 root causes identified and fixed:
+  1. **LOS beeline across rooms** — ghost with LOS through a doorway would beeline straight to the player instead of using BFS waypoints, causing diagonal wall clipping at doorway edges. Fix: beeline only when ghost and player are in the SAME room; cross-room movement always uses BFS waypoints through doorway centers.
+  2. **Single-rect walkable containment** — `canGhostMoveTo` required the ghost's entire 4px collision box inside ONE walkable rect. At room-doorway boundaries where the box straddles two rects, the move was rejected. Fix: during hunts, if single-rect fails, fall back to a 4-corner check (each corner must be in at least one walkable rect).
+  3. **Warning phase same issue** — warning phase LOS also beelined across rooms. Same fix applied.
+- Added debug: waypoint line in Hunt Debug panel (index, doorway/room type), cyan/orange dot + dashed line on active waypoint in world view, **GHOST→NEXT ROOM** button in debug controls
+- All gameplay tests pass
+
+## 2026-04-21 — Session 175
+- Added debug **LIGHTS ON** / **LIGHTS OFF** buttons in the collapsible debug controls panel
+- LIGHTS ON: flips breaker on (`housePowerOn = true`) + sets all `roomLights[].on = true`
+- LIGHTS OFF: sets all `roomLights[].on = false` (breaker stays as-is)
+- Buttons are side-by-side on one row at the bottom of the debug controls panel (open with T)
+- Click-only, no keyboard shortcut (avoiding further key conflicts)
+- All gameplay tests pass
+
+## 2026-04-21 — Session 174
+- Added debug "No Detection" toggle (`_dbgNoDetect`) — press **[N]** or click the **DETECT ON/OFF** button in the collapsible debug controls panel
+- When ON, ghost cannot sense the player through any path: LOS, noise, electronics, closet reveal, furniture spot-check, hunt start seeding, non-hunt noise routing, or kill check
+- Ghost still hunts, moves, searches rooms, and expands search normally — only player detection is suppressed
+- Hunt Debug panel shows `!! DETECTION DISABLED !!` and `Detect: DISABLED` when active; Ghost Info panel shows `!! NO DETECTION [N] !!`
+- 10 detection paths guarded by the toggle across warning phase, active hunt, electronics, closet reveal, furniture spot-check, `_initHuntLastKnown`, `ghostHearNoise`, and the kill check
+- All gameplay tests pass
+
+## 2026-04-21 — Session 173
+- Rebuilt hunt detection/search rules to remove omniscient player tracking:
+  - **Warning phase completely rewritten** — ghost no longer reads `_roomAtPoint(pcx, pcy)` to path toward the player. Now uses the same detection rules as active hunt: LOS raycast (`_huntHasLOS`) and range-gated noise (200px). When undetected, ghost searches outward from its own room via random adjacent room expansion (same system as active hunt search). Warning phase builds LOS/noise-based `ghostLastKnownRoom` / `_huntLastKnownX/Y` that carry into active hunt.
+  - **Warning→Hunt transition no longer re-reads player position** — it carries over whatever the warning phase determined. If warning never detected the player, ghost starts the active hunt searching its own room. Old code: `_huntLastKnownX = pcx; _huntLastKnownY = pcy;` regardless of detection. New code: only falls back to ghost's own room if `ghostLastKnownRoom` is null.
+  - **Noise detection range-gated to 200px** in both warning and active hunt phases. Old code had no range check — any `playerNoise > threshold` revealed the player's room from anywhere on the map.
+  - **Electronics detection rebuilt** — old code: held active electronic leaked `_huntLastKnownX = ppx; _huntLastKnownY = ppy` (exact coordinates) every frame with no range or hiding check. New code: range-gated to 150px, blocked by hiding (closet/furniture), reveals ROOM only (not exact position), logged in debug.
+  - **Kill eligibility now requires active detection** — new `_huntKillWindow` system: LOS sets 1.5s kill window, noise/electronics set 0.8s. Ghost must have recently detected the player to kill. Prevents random-walk kills where ghost stumbles into a hidden player.
+  - **Detection tracking** — `_huntDetectSrc` (none/LOS/noise/electronics/special) and `_huntKillWindow` (countdown) track current detection state.
+  - **Hunt Debug panel updated** — added `Detect:` line showing detection source + kill window, `Kill:` field now shows actual kill eligibility (detection + grace + proximity).
+  - Cursed hunt starts (`_initHuntLastKnown`) unchanged — player explicitly triggered the ghost, so position seed is intentional punishment (still respects hiding from Session 172 fix).
+  - All tests PASS
+
+## 2026-04-21 — Session 172
+- Fixed hidden players being unfairly found at hunt start:
+  - Root cause: `_initHuntLastKnown()` seeded the ghost with the player's exact position and room at hunt start. It checked for safe zone (y>720) and unhuntable rooms (Yard), but NOT for hiding state. A player hiding in a closet or behind furniture before a cursed hunt (Music Box, Summoning Circle, Voodoo, Tarot, Ouija) would have their exact position handed to the ghost.
+  - Fix: added `isHiding && (hideSource === "closet" || hideSource === "furniture")` check to `_initHuntLastKnown()`. When player is hidden, ghost is seeded with its own room center instead of the player's position — same behavior as the warning→hunt transition already had.
+  - Warning→hunt transition (line ~5425) already checked hiding — added debug tracking variables there too for consistency.
+  - Added `_huntStartSource` ("player" / "hidden→ghost_room" / "safe→ghost_room") and `_huntStartHidden` (bool) debug variables
+  - Added `Start: hid=Y/N src=...` line to Hunt Debug panel
+  - 6 call sites affected: Music Box, Summoning Circle, Voodoo, Tarot Reaper, Tarot Death, Ouija break (all direct hunts that skip warning phase)
+  - Normal periodic hunts were NOT affected (they use warning phase which already had the fix)
+  - Ghost types that still intentionally bypass hiding during active hunt: Deogen (`always_knows_player_pos`) ignores wall LOS but still respects closet/furniture cloak
+  - All tests PASS
+
+## 2026-04-21 — Session 171
+- Split debug HUD into 3 separate panels and made controls collapsible:
+  - **Panel 1 — Ghost Info** (top-right, 250px): compact ghost identity, hunt state, sanity, speed, noise. Always visible when debug is on.
+  - **Panel 2 — Hunt Debug** (below ghost info, 210px, red border): hunt-specific search/tracking info. Only appears during hunts/warnings. Shows: ghost room, search target room, last known room + coords, target source (LOS/NOISE/LAST/SAFE), LOS status, hidden status, cloak details, kill state.
+  - **Panel 3 — Debug Controls** (below hunt panel, 180px): collapsible button section. Toggle bar `[+]/[-] Debug Controls` expands/collapses the 4 force buttons (Hunt/Event/Scare/Interact).
+  - Toggle controls: click the bar or press `T` key
+  - Controls start collapsed by default to save screen space
+  - Buttons null out their hit rects when collapsed so clicks pass through
+  - Reduced font to 9px, tighter padding, narrower panels — significantly less screen clutter
+  - No hunt/search/ghost behavior changes — UI/layout only
+  - All tests PASS
+
+## 2026-04-21 — Session 170
+- Added hunt/search debug HUD lines (debug-only, no behavior changes):
+  - `Search:` line — ghost's current room, search target room, search count, remaining BFS waypoints
+  - `State:` line — LOS status, hidden status, last known player room, player's current room
+  - Widened debug HUD panel from 240px to 280px to fit new lines
+  - Both lines only appear during hunts/warnings (null otherwise)
+  - All values read directly from existing hunt state variables
+
+## 2026-04-21 — Session 169
+- Fixed ghost hunt door traversal — hunting ghost now passes through interior doors cleanly:
+  - Root cause: `canGhostMoveTo` blocked all closed doors unconditionally. The proactive door-slam had a 0.8s cooldown, so during that window the ghost hit the next door and got stuck. The fallback opened the door but didn't retry movement (went to stuck timer instead).
+  - `canGhostMoveTo`: skips door collision when `ghostHunting || huntWarning` — ghost passes through freely
+  - Added `_huntOpenDoorsAtGhost()`: after each hunt movement, opens any closed door overlapping the ghost + plays slam sound (respects 0.4s sound cooldown, leaves UV fingerprints)
+  - Warning phase and chase phase both call the helper after movement
+  - Simplified stuck-recovery `else` blocks in both phases — removed now-redundant door-finding code
+  - Normal ghost roaming, scare events, player movement: door collision unchanged
+  - LOS raycast still blocks on closed doors (correct — ghost can see through doors it opened, not through ones it hasn't reached yet)
+  - All tests PASS
+- Fixed ghost unfairly targeting player in van/yard during hunts:
+  - Root cause: 7 independent code paths fed raw player coordinates (pcx/pcy) into ghost hunt targeting with no zone check. When player was in the van (y≈926), `_roomAtPoint` returned the Yard room, ghost BFS-pathed to the front door and waited there.
+  - Added `_playerInSafeZone` flag (pcy > 720) gating all hunt target acquisition
+  - Added `_isHuntableRoom()` to exclude Yard from ghost search targets
+  - Added `_initHuntLastKnown()` helper for safe hunt-start initialization (used in 7 cursed/music-box/debug/voodoo/tarot hunt starts)
+  - Warning phase: player room forced null when in safe zone; ghost drifts to ghostFavRoom instead of van
+  - Active hunt: LOS forced false, noise reacquisition blocked, electronics leak blocked, Deogen always-knows disabled in safe zone
+  - Warning→hunt transition: treats safe-zone same as hidden-at-transition (ghost searches own room)
+  - Give-up timer uses extended 18s when player is in safe zone (matches hidden timing)
+  - Debug HUD: added Target line showing source (SAFE ZONE / LOS / noise / lastKnown) + last-known coordinates
+  - All tests PASS (ghost now targets Garage instead of Yard when player is outside)
+- Fixed ghost doorway traversal and cross-room movement during hunts:
+  - Added `_ghostRoom()` helper that resolves doorway positions to the nearest connected room (fixes `_roomAtPoint` returning null when ghost stands in a doorway)
+  - Updated all ghost room lookups (BFS pathfinding, hunt chase, warning phase, room presence checks, debug HUD) to use `_ghostRoom` instead of `_roomAtPoint`
+  - Increased waypoint advance threshold from 8px to 14px — ghost no longer stalls near doorway centers
+  - Added stuck recovery to hunt chase movement (was completely missing — warning and roam had it, hunt chase did not)
+  - Stuck timer in hunt uses 1.0s threshold (faster than roam's 2.5s) so ghost recovers quickly during active chase
+- All tests PASS
+- Fixed ghost doorway threshold jitter during hunts:
+  - Root cause: `canGhostMoveTo` required the ghost's full 16×16 body to fit inside a single walkable rect. Doorways are 38px wide but room walkable rects are inset 3px from room edges, creating a narrow overlap zone at each threshold. When the ghost approached diagonally, the 16×16 body straddled the room-doorway boundary — neither rect contained it fully — causing the slide mechanic to fall back to Y-only movement for multiple frames (visible as hesitation/jitter).
+  - Fix: during hunts (`ghostHunting || huntWarning`), `canGhostMoveTo` uses a 4×4 effective collision size for the walkable containment check instead of 16×16. This gives 6px tolerance per side, eliminating threshold straddling entirely. The yard boundary check (`y > 714`) still uses full GHOST_SIZE so the ghost can't escape outside.
+  - Safety: room-to-room gap without a doorway is 6px (3px inset × 2 sides), which is larger than the 4px body — ghost cannot clip through walls into adjacent rooms.
+  - All tests PASS
+
+## 2026-04-16 — Session 168
+- Enabled ~12 previously disabled features (removed `if (false &&` guards):
+  - Photo Camera evidence capture with star ratings
+  - Objectives HUD (bottom-left 3-item tracker with completion flash)
+  - Hunt Warning Overlay ("GHOST HUNT STARTING!" red pulsing text)
+  - Ghost interactions: door touch, Yurei door slam, light switch toggle, breaker flip, nearby interaction marks
+  - Photo capture feedback, bone proximity prompt, placement preview hint
+  - Spirit Box overlays, world item pickup prompt, keypad prompt
+  - Held item name label, sanity med flash (+35% overlay)
+- Activity graph + sanity bar in Threat Monitor panel (expanded panel, 4 click-bound updates)
+- Ghost object throwing during hunts (12%/sec for non-Poltergeist, EMF 2 at impact)
+- UV fingerprints on doors from ghost touch/slam (Ultraviolet evidence ghosts only)
+- EMF emissions on all ghost interaction types (door touch 2-3, Yurei slam 3, light switch 2, breaker 4, nearby 2)
+- Breaker trip sound effect (procedural Web Audio)
+- Proactive hunt door slam (ghost slams doors as it approaches, 0.8s cooldown)
+- All tests PASS (lint clean, smoke PASS, gameplay PASS)
+
+## 2026-04-16 — Session 167
+- Hunt atmosphere improvements:
+  - Heartbeat vignette gains red tint as ghost closes in (quadratic blend — subtle until very close)
+  - Ghost's search room + adjacent rooms flicker more aggressively during hunts (lower threshold), giving directional cue
+  - Flashlight dims smoothly based on ghost proximity during hunts (up to 55% reduction at point-blank)
+  - Ghost footstep volume now distance-based: full at <80px, fades to 15% at 350px+
+  - Ghost hunt moan volume now distance-based: full at <60px, fades to 10% at 360px+
+- ESLint cleanup: 47 warnings → 0 warnings
+  - Prefixed all unused variables/functions with underscore
+  - Converted catch(_e) and catch(_) to bare catch {}
+  - Removed dead pcx/pcy declaration in doInteract()
+- All tests PASS (syntax OK, 0 lint errors/warnings, smoke PASS, gameplay PASS)
+
 ## 2026-04-16 — Session 166
 - Added pixel art silhouettes for all 7 previously-missing items in both `drawEquipment()` pegboard cards and `_drawShopItemIcon()` shop preview: Photo Camera, Salt, Firelight, Sound Sensor, Motion Sensor, Head Gear, Parabolic Microphone
 - Added Firelight and Parabolic Microphone to TRUCK_CATALOG, SHOP_CATALOG, and ITEM_MAX_QTY so they can be added/removed from the pre-game truck loadout tab

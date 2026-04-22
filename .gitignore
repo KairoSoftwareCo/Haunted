@@ -1,0 +1,6 @@
+node_modules/
+test-results/
+playwright-report/
+.lint-tmp/
+tests/*-screenshot.png
+.DS_Store

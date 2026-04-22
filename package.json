@@ -1,0 +1,28 @@
+{
+  "name": "haunted",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "python3 -m http.server 8000",
+    "lint": "node scripts/lint-game.js",
+    "syntax": "awk '/<script>/,/<\\/script>/' index.html | sed '1d;$d' | node --check /dev/stdin && echo 'SYNTAX OK'",
+    "test:smoke": "node tests/run-smoke.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cashcrunk-svg/Haunted.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/cashcrunk-svg/Haunted/issues"
+  },
+  "homepage": "https://github.com/cashcrunk-svg/Haunted#readme",
+  "devDependencies": {
+    "eslint": "^10.2.0",
+    "playwright": "^1.59.1"
+  }
+}
